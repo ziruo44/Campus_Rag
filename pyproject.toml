@@ -1,0 +1,42 @@
+[project]
+name = "rag-agent"
+version = "0.1.0"
+description = "RAG Agent Loop with LangChain + Qwen + ChromaDB"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-chroma>=0.1.0",
+    "chromadb>=0.5.0",
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
+    "unstructured[md]>=0.16.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+    "structlog>=24.0",
+    "httpx>=0.27",
+    "dashscope>=1.25.17",
+    "rank_bm25>=0.2",
+    "jieba>=0.42",
+    "uvicorn>=0.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+
+[project.scripts]
+rag-agent = "rag_agent.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

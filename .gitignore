@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.pytest_cache/
+.pytest-tmp/
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Environment (contains API keys)
+.env
+docs/
+
+# Dependencies (use pyproject.toml, not lock files in git)
+# uv.lock
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Data & Indexes
+data/chroma_db/
+data/vector_index/
+data/chunks_debug.json
+data/memory/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local files
+transform_headers.py
+check_headers.py
