@@ -13,17 +13,14 @@ const emit = defineEmits<{
   remove: [threadId: string];
 }>();
 
-function formatTimestamp(value: string): string {
-  if (!value) {
-    return "";
-  }
-
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
-
 function handleRemove(threadId: string, event: MouseEvent): void {
   event.stopPropagation();
   emit("remove", threadId);
+}
+
+function formatTitle(title: string): string {
+  const normalized = title.trim();
+  return normalized || "未命名会话";
 }
 </script>
 
@@ -31,15 +28,15 @@ function handleRemove(threadId: string, event: MouseEvent): void {
   <aside class="history-panel">
     <div class="history-panel__header">
       <div>
-        <p class="history-panel__eyebrow">SESSION HISTORY</p>
+        <p class="history-panel__eyebrow">THREADS</p>
         <h2 class="history-panel__title">历史会话</h2>
       </div>
       <span class="history-panel__count">{{ items.length }}</span>
     </div>
 
-    <p v-if="loading" class="history-panel__placeholder">正在整理历史记录…</p>
+    <p v-if="loading" class="history-panel__placeholder">正在整理历史会话...</p>
     <p v-else-if="items.length === 0" class="history-panel__placeholder">
-      当前还没有已保存的会话。
+      发送第一条消息后，这里会自动生成会话标题。
     </p>
 
     <ol v-else class="history-panel__list">
@@ -55,15 +52,7 @@ function handleRemove(threadId: string, event: MouseEvent): void {
           :disabled="disabled"
           @click="emit('select', item.thread_id)"
         >
-          <div class="history-panel__item-top">
-            <span class="history-panel__name">{{ item.title || "New Session" }}</span>
-            <span class="history-panel__turns">{{ item.turn_count }} turns</span>
-          </div>
-          <p class="history-panel__preview">{{ item.preview || "No preview" }}</p>
-          <div class="history-panel__footer">
-            <span class="history-panel__id">{{ item.thread_id }}</span>
-            <time class="history-panel__time">{{ formatTimestamp(item.updated_at) }}</time>
-          </div>
+          <span class="history-panel__name">{{ formatTitle(item.title) }}</span>
         </button>
         <button
           class="history-panel__delete"

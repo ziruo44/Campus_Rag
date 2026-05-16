@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from threading import Lock
 from typing import Any
 
+from dotenv import load_dotenv
 from langchain.agents import create_agent as create_langchain_agent
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
 from rag_agent.agent_modules import create_agent as create_rag_agent
 from rag_agent.agent_modules.message_builder import build_agent_messages
@@ -31,6 +34,18 @@ class AgentInvocationResult:
     answer: str
     messages: list[Any]
     raw_result: dict[str, Any]
+
+
+@dataclass(slots=True)
+class ModelProviderHealthResult:
+    """Connectivity and configuration status for the upstream chat model."""
+
+    configured: bool
+    checked: bool
+    reachable: bool | None
+    model: str | None
+    base_url: str | None
+    detail: str | None = None
 
 
 class AgentRuntime:
@@ -95,3 +110,86 @@ class AgentRuntime:
         messages = result.get("messages", [])
         answer = messages[-1].content if messages else ""
         return AgentInvocationResult(answer=answer, messages=messages, raw_result=result)
+
+    def probe_model_provider(
+        self,
+        check_connection: bool = False,
+    ) -> ModelProviderHealthResult:
+        """Return model-provider configuration and optional live connectivity status."""
+        load_dotenv()
+        model = os.getenv("QWEN_MODEL", "qwen3.5-plus").strip() or "qwen3.5-plus"
+        base_url = self._normalize_optional_env("QWEN_BASE_URL")
+        api_key = self._normalize_optional_env("QWEN_API_KEY")
+        configured = bool(base_url and api_key)
+
+        if not configured:
+            return ModelProviderHealthResult(
+                configured=False,
+                checked=check_connection,
+                reachable=False if check_connection else None,
+                model=model,
+                base_url=base_url,
+                detail="Missing QWEN_BASE_URL or QWEN_API_KEY.",
+            )
+
+        if not check_connection:
+            return ModelProviderHealthResult(
+                configured=True,
+                checked=False,
+                reachable=None,
+                model=model,
+                base_url=base_url,
+                detail=None,
+            )
+
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=10.0,
+                max_retries=0,
+            )
+            client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+            )
+            return ModelProviderHealthResult(
+                configured=True,
+                checked=True,
+                reachable=True,
+                model=model,
+                base_url=base_url,
+                detail="Model provider responded successfully.",
+            )
+        except (APIConnectionError, APITimeoutError, APIStatusError) as exc:
+            logger.warning("Model provider health probe failed: %s", exc)
+            return ModelProviderHealthResult(
+                configured=True,
+                checked=True,
+                reachable=False,
+                model=model,
+                base_url=base_url,
+                detail=self._describe_exception(exc),
+            )
+
+    def _normalize_optional_env(self, key: str) -> str | None:
+        value = os.getenv(key)
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    def _describe_exception(self, exc: BaseException) -> str:
+        """Return the deepest available exception message."""
+        messages: list[str] = []
+        current: BaseException | None = exc
+        while current is not None:
+            text = str(current).strip()
+            if text:
+                messages.append(text)
+            current = current.__cause__ or current.__context__
+
+        if not messages:
+            return exc.__class__.__name__
+        return messages[-1]

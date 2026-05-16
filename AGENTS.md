@@ -13,7 +13,9 @@ Current stack:
 - ChromaDB vector index
 - BM25 + vector hybrid retrieval with RRF reranking
 - Persistent thread-based conversational memory
-- CLI entry point today, with planned FastAPI + Vue3 expansion
+- FastAPI backend
+- Vue3 demo frontend
+- CLI entry point for local debugging and one-shot queries
 
 This is not just a basic retrieval demo. The current codebase already includes:
 
@@ -23,6 +25,8 @@ This is not just a basic retrieval demo. The current codebase already includes:
 - hybrid retrieval
 - multi-turn memory
 - thread references and profile storage
+- structured major-comparison presentation output
+- ambiguity clarification for follow-up major queries
 
 ## Commands
 
@@ -53,6 +57,13 @@ uv run python main.py --thread-id <thread_id> --attach-thread <other_thread_id>
 
 # Run indexing module directly
 uv run python -m src.rag_agent.indexing.index_builder
+
+# Run backend locally
+uv run uvicorn rag_agent.api.app:app --reload
+
+# Run frontend locally
+cd frontend
+npm run dev
 
 # Run tests
 uv run pytest tests/
@@ -89,10 +100,16 @@ High-level flow:
 4. Build hybrid retrieval on top of vector search + BM25
 5. Create the tool-calling agent
 6. Persist turns into thread memory
+7. Post-process selected answers into structured presentation data for the frontend
 
 Current runtime entry point:
 
 - `main.py`
+
+Current web app entry points:
+
+- backend: `src/rag_agent/api/app.py`
+- frontend: `frontend/src/App.vue`
 
 If reusable app logic is needed later for FastAPI, extract it from `main.py` instead of duplicating it.
 
@@ -102,11 +119,14 @@ If reusable app logic is needed later for FastAPI, extract it from `main.py` ins
 |--------|-----------|---------|
 | `agent_modules/` | `agent.py`, `model.py`, `message_builder.py` | Agent assembly, model setup, memory-aware message building |
 | `agent_modules/tools/` | `router.py`, `query_rewrite.py`, `query_decomposition.py`, `retrieval.py`, `memory_tools.py` | Tool definitions used by the agent |
+| `api/` | `app.py`, `schemas.py`, `routes/chat.py`, `services/*` | FastAPI app, response contracts, chat orchestration |
+| `api/services/` | `agent_runtime.py`, `chat_service.py`, `major_comparison.py` | Shared runtime, chat orchestration, comparison/clarification logic |
 | `data_processing/` | `loader.py`, `chunker.py`, `metadata.py` | Document loading, chunking, metadata enrichment |
 | `indexing/` | `index_builder.py`, `embeddings.py` | ChromaDB indexing and embedding wrapper |
 | `retrieval/` | `hybrid_search.py`, `bm25_index.py`, `academy_map.py`, `config.py` | Hybrid retrieval and retrieval settings |
 | `memory_session/` | `config.py`, `models.py`, `store.py`, `session.py`, `locks.py` | Persistent thread memory and locking |
 | `prompts/` | `system_prompt.txt`, `router.txt`, `query_rewrite.txt`, `query_decomposition.txt` | Prompt assets |
+| `frontend/` | `src/App.vue`, `src/components/*`, `src/composables/useChatSession.ts` | Vue chat UI and rendering logic |
 | `utils/` | `path.py`, `prompt_loader.py` | Path and prompt helpers |
 
 ## Retrieval Design
@@ -135,6 +155,34 @@ The agent also uses:
 
 Do not collapse this back into a single plain retrieval call unless explicitly requested.
 
+## Major Comparison Design
+
+The current "major comparison" capability is not implemented as a standalone agent tool.
+
+It is implemented as a global chat-layer capability around the existing agent flow:
+
+- pre-generation intent and boundary handling in `chat_service.py`
+- comparison and ambiguity helpers in `major_comparison.py`
+- normal retrieval still goes through the existing routed agent tools
+- post-generation parsing extracts structured comparison presentation data
+
+Important constraints:
+
+- do not add a separate `comparison_tool` unless explicitly requested
+- do not replace retrieval with hardcoded field-by-field comparisons
+- use programmatic boundary control for ambiguous follow-up queries
+- use prompt/output shaping only to improve answer format, not to own boundary decisions
+
+Current comparison behavior should follow this rule order:
+
+- explicit comparison intent: treat as comparison
+- explicit single-major intent: treat as single-major explanation
+- short ambiguous follow-up after a comparison: ask for clarification first
+
+The preferred clarification text is:
+
+- `你是想了解该专业，还是想和上一轮做对比？`
+
 ## Memory System
 
 The memory system is a first-class subsystem and should be preserved.
@@ -146,6 +194,7 @@ Implemented capabilities:
 - per-thread profile storage
 - per-thread summaries
 - thread references
+- assistant-message presentation metadata
 - concurrent update locking
 - corrupt file recovery
 - switching active threads in CLI
@@ -164,6 +213,7 @@ When adding features:
 - reuse the existing memory model
 - bind tools to an explicit `ManagedThread` when possible
 - preserve autosave semantics in `ManagedThread` and `ThreadStore`
+- if frontend rendering must survive page refresh or thread restore, persist the data in memory instead of returning it only from `/api/chat`
 
 ## Data, Paths, and Metadata
 
@@ -204,6 +254,7 @@ Chunk metadata is relied on by retrieval and filtering. Preserve fields such as:
 - Do not hardcode API keys, model names, or absolute local paths.
 - If path handling needs to be standardized, use the helpers in [path.py](D:/ziruo_project/rag_project/src/rag_agent/utils/path.py).
 - Prefer extending existing modules over creating parallel implementations of retrieval or memory logic.
+- For frontend demo UX, prefer compact and focused layouts; avoid oversized top-of-page showcase blocks unless explicitly requested.
 
 ## Testing Guidance
 
@@ -215,14 +266,19 @@ When adding features, prefer:
 - API-level tests for future FastAPI work
 - avoiding brittle end-to-end LLM assertions unless tightly scoped or mocked
 
+For comparison and clarification features, test at three layers when possible:
+
+- pure helper tests for parsing / intent detection / clarification resolution
+- API tests for response shape and thread persistence
+- frontend build verification for rendering and type safety
+
 ## Near-Term Direction
 
 Planned evolution:
 
-- FastAPI backend around the current agent flow
-- Vue3 frontend chat UI
 - better citation / evidence display
 - more stable structured output for major-comparison questions
+- cleaner frontend presentation for demo and resume use
 
 When implementing these:
 
@@ -230,3 +286,4 @@ When implementing these:
 - do not bypass `memory_session`
 - do not replace hybrid retrieval with a placeholder implementation
 - optimize for demoability and resume value
+- treat structured comparison display as a supporting demo feature, not the primary system capability

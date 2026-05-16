@@ -11,60 +11,69 @@ const emit = defineEmits<{
   removeTurn: [turnId: string];
 }>();
 
-const samplePrompts = [
-  "计算机科学与技术和人工智能有什么区别？",
-  "信息工程学院有哪些专业？",
-  "那人工智能的核心课程有哪些？",
-];
-
 function handleRemoveTurn(turnId: string, event: MouseEvent): void {
   event.stopPropagation();
   emit("removeTurn", turnId);
+}
+
+function formatTimestamp(timestamp: string): string {
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 </script>
 
 <template>
   <section class="message-board" aria-live="polite">
     <div v-if="isRestoring" class="message-board__empty">
-      <p class="message-board__empty-title">正在恢复会话记录…</p>
-      <p class="message-board__empty-copy">如果本地存在咨询编号，页面会自动还原整段对话。</p>
+      <p class="message-board__empty-kicker">RESTORING SESSION</p>
+      <p class="message-board__empty-title">正在恢复会话记录</p>
+      <p class="message-board__empty-copy">
+        如果本地保存了历史线程，页面会自动拉回完整上下文。
+      </p>
     </div>
 
     <div v-else-if="messages.length === 0" class="message-board__empty">
-      <p class="message-board__empty-title">开始你的第一轮咨询</p>
+      <p class="message-board__empty-kicker">CAMPUS KNOWLEDGE AGENT</p>
+      <p class="message-board__empty-title">从一个问题开始</p>
       <p class="message-board__empty-copy">
-        这里会保留当前会话内的所有问答，刷新页面后也可以继续。
+        这里会保留当前会话内的全部问答，适合连续追问学院、专业、课程与培养方向。
       </p>
-      <ul class="message-board__prompts">
-        <li v-for="prompt in samplePrompts" :key="prompt">{{ prompt }}</li>
-      </ul>
     </div>
 
     <ol v-else class="message-board__list">
       <li
         v-for="message in messages"
         :key="message.id"
-        class="message-card"
-        :class="`message-card--${message.role}`"
+        class="message-row"
+        :class="`message-row--${message.role}`"
       >
-        <div class="message-card__meta">
-          <span class="message-card__role">
-            {{ message.role === "user" ? "用户提问" : "Agent 回答" }}
-          </span>
-          <span v-if="message.timestamp" class="message-card__timestamp">
-            {{ new Date(message.timestamp).toLocaleString("zh-CN", { hour12: false }) }}
-          </span>
+        <div class="message-row__meta">
+          <div class="message-row__identity">
+            <span class="message-row__role">
+              {{ message.role === "user" ? "我" : "校园知识助手" }}
+            </span>
+            <span v-if="message.timestamp" class="message-row__timestamp">
+              {{ formatTimestamp(message.timestamp) }}
+            </span>
+          </div>
           <button
             v-if="message.role === 'user'"
-            class="message-card__delete"
+            class="message-row__delete"
             type="button"
             :disabled="disabled"
             @click="handleRemoveTurn(message.turnId, $event)"
           >
-            删除该轮
+            删除
           </button>
         </div>
-        <p class="message-card__content">{{ message.content }}</p>
+        <div class="message-row__bubble">
+          <p class="message-row__content">{{ message.content }}</p>
+        </div>
       </li>
     </ol>
   </section>

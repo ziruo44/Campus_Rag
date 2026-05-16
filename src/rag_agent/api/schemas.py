@@ -7,6 +7,17 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class ModelProviderHealthResponse(BaseModel):
+    """Serialized model-provider health probe details."""
+
+    configured: bool
+    checked: bool
+    reachable: bool | None
+    model: str | None
+    base_url: str | None
+    detail: str | None = None
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
@@ -15,6 +26,7 @@ class HealthResponse(BaseModel):
     vector_index_exists: bool
     memory_dir_accessible: bool
     runtime_initialized: bool
+    model_provider: ModelProviderHealthResponse
 
 
 class ChatRequest(BaseModel):

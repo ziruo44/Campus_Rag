@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any, Callable
+
+import httpx
+from openai import APIConnectionError, APITimeoutError
 
 from rag_agent.api.services.agent_runtime import AgentRuntime, RuntimeUnavailableError
 from rag_agent.memory_session.session import ManagedThread, SessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class ThreadNotFoundError(FileNotFoundError):
@@ -65,6 +71,12 @@ class ChatService:
                 raise
             if isinstance(exc, ChatExecutionError):
                 raise
+            if isinstance(exc, (APIConnectionError, APITimeoutError, httpx.HTTPError)):
+                detail = self._describe_exception(exc)
+                logger.exception("Model provider request failed")
+                raise RuntimeUnavailableError(
+                    f"Model provider request failed: {detail}"
+                ) from exc
             raise ChatExecutionError("Failed to execute chat request.") from exc
 
     def get_thread(self, thread_id: str) -> dict[str, Any]:
@@ -188,3 +200,17 @@ class ChatService:
                 return user_content.replace("\n", " ")[:96]
 
         return "Empty session"
+
+    def _describe_exception(self, exc: BaseException) -> str:
+        """Return the deepest non-empty exception message for diagnostics."""
+        messages: list[str] = []
+        current: BaseException | None = exc
+        while current is not None:
+            text = str(current).strip()
+            if text:
+                messages.append(text)
+            current = current.__cause__ or current.__context__
+
+        if not messages:
+            return exc.__class__.__name__
+        return messages[-1]

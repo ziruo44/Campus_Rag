@@ -37,15 +37,15 @@ function handleKeydown(event: KeyboardEvent): void {
       id="chat-input"
       v-model="draft"
       class="composer__input"
-      rows="4"
+      rows="2"
       :disabled="disabled || loading"
       placeholder="例如：计算机科学与技术和人工智能有什么区别？"
       @keydown="handleKeydown"
     />
     <div class="composer__footer">
-      <p class="composer__hint">按 Enter 发送，Shift + Enter 换行。</p>
+      <p class="composer__hint">Enter 发送，Shift + Enter 换行</p>
       <button class="composer__button" type="submit" :disabled="disabled || loading">
-        {{ loading ? "发送中…" : "发送问题" }}
+        {{ loading ? "思考中..." : "发送" }}
       </button>
     </div>
   </form>
