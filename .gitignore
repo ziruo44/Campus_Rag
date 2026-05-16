@@ -22,6 +22,7 @@ frontend/dist/
 frontend/.vite/
 
 # Data & Indexes
+data/
 data/chroma_db/
 data/vector_index/
 data/chunks_debug.json
