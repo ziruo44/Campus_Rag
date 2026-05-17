@@ -40,3 +40,5 @@ Thumbs.db
 # Local files
 transform_headers.py
 check_headers.py
+temp_resume_ref.png
+屏幕截图 *.png

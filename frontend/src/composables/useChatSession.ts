@@ -5,10 +5,11 @@ import {
   deleteTurn,
   fetchThread,
   fetchThreads,
-  sendChat,
+  sendChatStream,
 } from "../services/api";
 import type {
   ChatMessage,
+  ComposerSubmitPayload,
   ThreadListItem,
   ThreadResponse,
   ThreadTurnDTO,
@@ -52,6 +53,21 @@ function mapTurnsToMessages(turns: ThreadTurnDTO[]): ChatMessage[] {
   return mapped;
 }
 
+function updateMessage(
+  items: ChatMessage[],
+  messageId: string,
+  updater: (message: ChatMessage) => ChatMessage,
+): ChatMessage[] {
+  const index = items.findIndex((message) => message.id === messageId);
+  if (index === -1) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  nextItems[index] = updater(nextItems[index]);
+  return nextItems;
+}
+
 function readStoredThreadId(): string | null {
   if (typeof window === "undefined") {
     return null;
@@ -91,6 +107,10 @@ function toUserFacingError(error: unknown): string {
 
   if (error instanceof TypeError) {
     return "The browser could not reach the backend service.";
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
   }
 
   return "An unexpected error occurred.";
@@ -174,8 +194,8 @@ export function useChatSession() {
     }
   }
 
-  async function sendMessage(content: string): Promise<void> {
-    const normalized = content.trim();
+  async function sendMessage(payload: ComposerSubmitPayload): Promise<void> {
+    const normalized = payload.message.trim();
     if (!normalized || isLoading.value) {
       return;
     }
@@ -193,15 +213,93 @@ export function useChatSession() {
     };
     messages.value.push(optimisticUserMessage);
 
+    const streamingAssistantMessage: ChatMessage = {
+      id: buildMessageId("assistant"),
+      turnId: optimisticUserMessage.turnId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date().toISOString(),
+    };
+    messages.value.push(streamingAssistantMessage);
+
+    let resolvedThreadId = threadId.value;
+    let streamError = "";
+
     try {
-      const response = await sendChat(normalized, threadId.value ?? undefined);
-      const thread = await fetchThread(response.thread_id);
+      await sendChatStream(
+        normalized,
+        (chunk) => {
+          if (chunk.thread_id) {
+            resolvedThreadId = chunk.thread_id;
+            threadId.value = chunk.thread_id;
+            writeStoredThreadId(chunk.thread_id);
+          }
+
+          if (chunk.turn_id) {
+            messages.value = updateMessage(
+              updateMessage(messages.value, optimisticUserMessage.id, (message) => ({
+                ...message,
+                turnId: chunk.turn_id ?? message.turnId,
+              })),
+              streamingAssistantMessage.id,
+              (message) => ({
+                ...message,
+                turnId: chunk.turn_id ?? message.turnId,
+              }),
+            );
+          }
+
+          if (chunk.content) {
+            messages.value = updateMessage(
+              messages.value,
+              streamingAssistantMessage.id,
+              (message) => ({
+                ...message,
+                content: `${message.content}${chunk.content}`,
+              }),
+            );
+          }
+
+          if (chunk.error) {
+            streamError = chunk.error;
+          }
+        },
+        payload.preciseMode,
+        threadId.value ?? undefined,
+      );
+
+      if (streamError) {
+        throw new Error(streamError);
+      }
+
+      if (!resolvedThreadId) {
+        throw new Error("Streaming response did not include a thread ID.");
+      }
+
+      const thread = await fetchThread(resolvedThreadId);
       applyThread(thread);
       await refreshHistory();
     } catch (error) {
-      messages.value = messages.value.filter(
-        (message) => message.id !== optimisticUserMessage.id,
-      );
+      if (resolvedThreadId) {
+        try {
+          const thread = await fetchThread(resolvedThreadId);
+          applyThread(thread);
+          await refreshHistory();
+        } catch {
+          messages.value = messages.value.filter(
+            (message) =>
+              message.id !== optimisticUserMessage.id &&
+              message.id !== streamingAssistantMessage.id,
+          );
+        }
+      } else {
+        messages.value = messages.value.filter(
+          (message) =>
+            message.id !== optimisticUserMessage.id &&
+            message.id !== streamingAssistantMessage.id,
+        );
+      }
+
       errorMessage.value = toUserFacingError(error);
     } finally {
       isLoading.value = false;

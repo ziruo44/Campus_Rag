@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
 
     message: str = Field(min_length=1)
     thread_id: str | None = None
+    precise_mode: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -41,6 +42,16 @@ class ChatResponse(BaseModel):
 
     thread_id: str
     answer: str
+
+
+class ChatStreamChunk(BaseModel):
+    """One SSE chat chunk serialized as JSON."""
+
+    content: str
+    is_final: bool
+    thread_id: str | None = None
+    turn_id: str | None = None
+    error: str | None = None
 
 
 class ThreadMessageDTO(BaseModel):

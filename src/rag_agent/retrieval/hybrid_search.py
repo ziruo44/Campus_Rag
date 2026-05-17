@@ -5,6 +5,7 @@ from typing import Any
 
 from langchain_core.documents import Document
 
+from rag_agent.observability.performance import measure_stage
 from rag_agent.retrieval.bm25_index import BM25Indexer
 from rag_agent.retrieval.config import RetrievalSettings
 
@@ -65,8 +66,9 @@ class HybridRetriever:
         Returns:
             List of documents
         """
-        k = k or self.settings.vector_k
-        return self.index_builder.similarity_search(query, k=k)
+        with measure_stage("retrieval.vector_search"):
+            k = k or self.settings.vector_k
+            return self.index_builder.similarity_search(query, k=k)
 
     def bm25_search(self, query: str, k: int | None = None) -> list[tuple[Document, float]]:
         """
@@ -79,8 +81,9 @@ class HybridRetriever:
         Returns:
             List of (Document, score) tuples
         """
-        k = k or self.settings.bm25_k
-        return self._bm25_indexer.search(query, k=k)
+        with measure_stage("retrieval.bm25_search"):
+            k = k or self.settings.bm25_k
+            return self._bm25_indexer.search(query, k=k)
 
     def hybrid_search(
         self,
@@ -101,16 +104,17 @@ class HybridRetriever:
         Returns:
             List of reranked documents
         """
-        top_k = top_k or self.settings.default_top_k
-        vector_k = vector_k or self.settings.vector_k
-        bm25_k = bm25_k or self.settings.bm25_k
+        with measure_stage("retrieval.hybrid_search"):
+            top_k = top_k or self.settings.default_top_k
+            vector_k = vector_k or self.settings.vector_k
+            bm25_k = bm25_k or self.settings.bm25_k
 
-        vector_docs = self.vector_search(query, k=vector_k)
-        bm25_results = self.bm25_search(query, k=bm25_k)
-        bm25_docs = [doc for doc, _ in bm25_results]
+            vector_docs = self.vector_search(query, k=vector_k)
+            bm25_results = self.bm25_search(query, k=bm25_k)
+            bm25_docs = [doc for doc, _ in bm25_results]
 
-        reranked = self._rrf_rerank(vector_docs, bm25_docs)
-        return reranked[:top_k]
+            reranked = self._rrf_rerank(vector_docs, bm25_docs)
+            return reranked[:top_k]
 
     def filtered_search(
         self,
@@ -180,21 +184,39 @@ class HybridRetriever:
         Returns:
             Filtered documents matching the metadata criteria
         """
-        top_k = top_k or self.settings.default_top_k
+        with measure_stage("retrieval.metadata_search"):
+            top_k = top_k or self.settings.default_top_k
 
-        # Build filters with field alias support
-        filters = {}
-        if college:
-            filters["college"] = college
-        if major:
-            filters["major"] = major
-        if section:
-            filters["section"] = section
+            # Build filters with field alias support
+            filters = {}
+            if college:
+                filters["college"] = college
+            if major:
+                filters["major"] = major
+            if section:
+                filters["section"] = section
 
-        # If no query, search all chunks directly with metadata filter
-        if not query:
+            # If no query, search all chunks directly with metadata filter
+            if not query:
+                filtered = []
+                for doc in self.chunks:
+                    match = True
+                    for key, value in filters.items():
+                        doc_val = _get_field(doc, COLLEGE_FIELDS if key == "college" else MAJOR_FIELDS if key == "major" else SECTION_FIELDS)
+                        if doc_val is None or value not in doc_val:
+                            match = False
+                            break
+                    if match:
+                        filtered.append(doc)
+                        if len(filtered) >= top_k:
+                            break
+                return filtered
+
+            # With query: use hybrid search then filter
+            docs = self.hybrid_search(query, top_k=top_k * 3)
+
             filtered = []
-            for doc in self.chunks:
+            for doc in docs:
                 match = True
                 for key, value in filters.items():
                     doc_val = _get_field(doc, COLLEGE_FIELDS if key == "college" else MAJOR_FIELDS if key == "major" else SECTION_FIELDS)
@@ -205,25 +227,8 @@ class HybridRetriever:
                     filtered.append(doc)
                     if len(filtered) >= top_k:
                         break
+
             return filtered
-
-        # With query: use hybrid search then filter
-        docs = self.hybrid_search(query, top_k=top_k * 3)
-
-        filtered = []
-        for doc in docs:
-            match = True
-            for key, value in filters.items():
-                doc_val = _get_field(doc, COLLEGE_FIELDS if key == "college" else MAJOR_FIELDS if key == "major" else SECTION_FIELDS)
-                if doc_val is None or value not in doc_val:
-                    match = False
-                    break
-            if match:
-                filtered.append(doc)
-                if len(filtered) >= top_k:
-                    break
-
-        return filtered
 
     def _rrf_rerank(
         self,

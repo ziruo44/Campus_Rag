@@ -1,11 +1,20 @@
 export type ChatRequest = {
   message: string;
   thread_id?: string;
+  precise_mode?: boolean;
 };
 
 export type ChatResponse = {
   thread_id: string;
   answer: string;
+};
+
+export type ChatStreamChunk = {
+  content: string;
+  is_final: boolean;
+  thread_id?: string;
+  turn_id?: string;
+  error?: string;
 };
 
 export type ThreadMessageDTO = {
@@ -45,4 +54,9 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   timestamp?: string;
+};
+
+export type ComposerSubmitPayload = {
+  message: string;
+  preciseMode: boolean;
 };

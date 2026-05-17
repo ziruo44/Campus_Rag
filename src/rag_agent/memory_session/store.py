@@ -21,6 +21,7 @@ from rag_agent.memory_session.models import (
     migrate_legacy_document,
     utc_now_iso,
 )
+from rag_agent.observability.performance import measure_stage
 
 if TYPE_CHECKING:
     from rag_agent.memory_session.session import ManagedThread
@@ -76,16 +77,17 @@ class ThreadStore:
         thread_id: str,
         create: bool = False,
     ) -> ThreadDocument:
-        with self._thread_lock(thread_id):
-            path = self.settings.get_session_path(thread_id)
-            if not path.exists():
-                if not create:
-                    raise FileNotFoundError(f"Thread not found: {thread_id}")
-                document = ThreadDocument.new(thread_id, self.settings.max_turns)
-                self._write_document(path, document)
-                return document
+        with measure_stage("memory.load_thread_document"):
+            with self._thread_lock(thread_id):
+                path = self.settings.get_session_path(thread_id)
+                if not path.exists():
+                    if not create:
+                        raise FileNotFoundError(f"Thread not found: {thread_id}")
+                    document = ThreadDocument.new(thread_id, self.settings.max_turns)
+                    self._write_document(path, document)
+                    return document
 
-            return self._read_document(path=path, thread_id=thread_id)
+                return self._read_document(path=path, thread_id=thread_id)
 
     def update_thread(
         self,
@@ -93,21 +95,22 @@ class ThreadStore:
         updater: DocumentUpdater,
         create: bool = False,
     ) -> ThreadDocument:
-        with self._thread_lock(thread_id):
-            path = self.settings.get_session_path(thread_id)
-            if not path.exists():
-                if not create:
-                    raise FileNotFoundError(f"Thread not found: {thread_id}")
-                document = ThreadDocument.new(thread_id, self.settings.max_turns)
-            else:
-                document = self._read_document(path=path, thread_id=thread_id)
+        with measure_stage("memory.update_thread"):
+            with self._thread_lock(thread_id):
+                path = self.settings.get_session_path(thread_id)
+                if not path.exists():
+                    if not create:
+                        raise FileNotFoundError(f"Thread not found: {thread_id}")
+                    document = ThreadDocument.new(thread_id, self.settings.max_turns)
+                else:
+                    document = self._read_document(path=path, thread_id=thread_id)
 
-            updater(document)
-            self._trim_turns(document)
-            self._sync_thread_title(document)
-            document.updated_at = utc_now_iso()
-            self._write_document(path, document)
-            return document
+                updater(document)
+                self._trim_turns(document)
+                self._sync_thread_title(document)
+                document.updated_at = utc_now_iso()
+                self._write_document(path, document)
+                return document
 
     def list_thread_ids(self) -> list[str]:
         return sorted(path.stem for path in self.settings.session_dir.glob("*.json"))

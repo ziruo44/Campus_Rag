@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { ComposerSubmitPayload } from "../types/chat";
 
 const props = defineProps<{
   disabled?: boolean;
@@ -7,10 +8,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [message: string];
+  submit: [payload: ComposerSubmitPayload];
 }>();
 
 const draft = ref("");
+const preciseMode = ref(false);
 
 function submitMessage(): void {
   const normalized = draft.value.trim();
@@ -18,7 +20,10 @@ function submitMessage(): void {
     return;
   }
 
-  emit("submit", normalized);
+  emit("submit", {
+    message: normalized,
+    preciseMode: preciseMode.value,
+  });
   draft.value = "";
 }
 
@@ -44,9 +49,24 @@ function handleKeydown(event: KeyboardEvent): void {
     />
     <div class="composer__footer">
       <p class="composer__hint">Enter 发送，Shift + Enter 换行</p>
-      <button class="composer__button" type="submit" :disabled="disabled || loading">
-        {{ loading ? "思考中..." : "发送" }}
-      </button>
+      <div class="composer__actions">
+        <label class="composer__toggle composer__toggle--compact">
+          <input
+            v-model="preciseMode"
+            class="composer__toggle-input"
+            type="checkbox"
+            :disabled="disabled || loading"
+          />
+          <span class="composer__toggle-switch" aria-hidden="true"></span>
+          <span class="composer__toggle-copy">
+            <span class="composer__toggle-title">精准回复</span>
+            <span class="composer__toggle-note">更慢</span>
+          </span>
+        </label>
+        <button class="composer__button" type="submit" :disabled="disabled || loading">
+          {{ loading ? "思考中..." : "发送" }}
+        </button>
+      </div>
     </div>
   </form>
 </template>

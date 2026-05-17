@@ -18,7 +18,7 @@ from rag_agent.agent_modules.tools.retrieval import (
 from rag_agent.agent_modules.tools.router import create_router_tool
 from rag_agent.indexing.index_builder import IndexBuilder
 from rag_agent.prompts import get_system_prompt
-from rag_agent.agent_modules.tools.memory_tools import create_memory_tools
+from rag_agent.retrieval.hybrid_search import HybridRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +27,16 @@ def create_rag_agent_tools(
     llm: BaseChatModel,
     index_builder: IndexBuilder,
     chunks: list[Any],
-    memory_tools: list | None = None,
+    retriever: HybridRetriever | None = None,
 ) -> list:
     """Create all tools for the LangChain agent."""
-    resolved_memory_tools = memory_tools or create_memory_tools()
     return [
         create_query_decomposition_tool(llm),
         create_router_tool(llm),
         create_query_rewrite_tool(llm),
-        create_list_retrieval_tool(index_builder, chunks),
-        create_detail_retrieval_tool(index_builder, chunks),
-        create_general_retrieval_tool(index_builder, chunks),
-        *resolved_memory_tools,
+        create_list_retrieval_tool(index_builder, chunks, retriever=retriever),
+        create_detail_retrieval_tool(index_builder, chunks, retriever=retriever),
+        create_general_retrieval_tool(index_builder, chunks, retriever=retriever),
     ]
 
 
@@ -51,7 +49,7 @@ class RagAgent:
         index_builder: IndexBuilder | None = None,
         chunks: list[Any] | None = None,
         system_prompt: str | None = None,
-        memory_tools: list[Any] | None = None,
+        retriever: HybridRetriever | None = None,
     ):
         self.llm = llm or default_llm
         self.system_prompt = system_prompt or get_system_prompt()
@@ -64,7 +62,7 @@ class RagAgent:
                 llm=self.llm,
                 index_builder=index_builder,
                 chunks=chunks,
-                memory_tools=memory_tools,
+                retriever=retriever,
             )
             logger.info("Initialized %s agent tools", len(self._tools))
         else:
@@ -99,7 +97,7 @@ def create_agent(
     chunks: list[Any],
     llm: BaseChatModel | None = None,
     system_prompt: str | None = None,
-    memory_tools: list[Any] | None = None,
+    retriever: HybridRetriever | None = None,
 ) -> RagAgent:
     """Create a configured RAG Agent."""
     return RagAgent(
@@ -107,5 +105,5 @@ def create_agent(
         index_builder=index_builder,
         chunks=chunks,
         system_prompt=system_prompt,
-        memory_tools=memory_tools,
+        retriever=retriever,
     )
