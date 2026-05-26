@@ -35,8 +35,24 @@ dev = [
 ]
 
 [project.scripts]
-rag-agent = "rag_agent.__main__:main"
+rag-agent = "agent.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/agent",
+    "src/api_view",
+    "src/domain",
+    "src/llm",
+    "src/memory",
+    "src/shared",
+    "src/utils",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "manual: manual workflow inspection tests",
+]

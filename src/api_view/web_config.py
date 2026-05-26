@@ -1,0 +1,96 @@
+"""Pydantic schemas for the FastAPI backend."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class ModelProviderHealthResponse(BaseModel):
+    """Serialized model-provider health probe details."""
+
+    configured: bool
+    checked: bool
+    reachable: bool | None
+    model: str | None
+    base_url: str | None
+    detail: str | None = None
+
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+
+    status: str
+    raw_data_exists: bool
+    vector_index_exists: bool
+    memory_dir_accessible: bool
+    runtime_initialized: bool
+    model_provider: ModelProviderHealthResponse
+
+
+class ChatRequest(BaseModel):
+    """Chat request payload."""
+
+    message: str = Field(min_length=1)
+    thread_id: str | None = None
+    precise_mode: bool = False
+
+
+class ChatResponse(BaseModel):
+    """Chat response payload."""
+
+    thread_id: str
+    answer: str
+
+
+class ChatStreamChunk(BaseModel):
+    """One SSE chat chunk serialized as JSON."""
+
+    content: str
+    is_final: bool
+    thread_id: str | None = None
+    turn_id: str | None = None
+    error: str | None = None
+
+
+class ThreadMessageDTO(BaseModel):
+    """Serialized thread message."""
+
+    role: str
+    content: str
+    timestamp: str
+
+
+class ThreadTurnDTO(BaseModel):
+    """Serialized conversation turn."""
+
+    turn_id: str
+    state: str
+    user_message: ThreadMessageDTO | None
+    assistant_message: ThreadMessageDTO | None
+    updated_at: str
+
+
+class ThreadResponse(BaseModel):
+    """Serialized thread document."""
+
+    thread_id: str
+    title: str
+    summary: str
+    context_summary: str = ""
+    context_summary_updated_at: str = ""
+    context_compacted_turn_count: int = 0
+    profile: dict[str, Any]
+    turns: list[ThreadTurnDTO]
+
+
+class ThreadListItemResponse(BaseModel):
+    """Serialized thread summary for history listings."""
+
+    thread_id: str
+    title: str
+    summary: str
+    updated_at: str
+    turn_count: int
+    preview: str

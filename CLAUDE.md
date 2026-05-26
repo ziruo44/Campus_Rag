@@ -1,213 +1,136 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working in this repository. It has two parts:
+**behavioral guidelines** (how to work) and **project reference** (what to know).
 
-## Project Overview
+---
 
-RAG Agent for Wenzhou Business College campus knowledge base (温州商学院学院介绍). Built with LangChain + Qwen (DashScope) + ChromaDB, featuring ReAct-based tool calling.
+## Behavioral Guidelines
 
-## Commands
+These rules reduce common LLM coding mistakes. They bias toward caution over speed — for trivial tasks, use judgment.
+
+### 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+### 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+### 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it — don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+### 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+## Project Reference
+
+Campus knowledge RAG agent for Wenzhou Business College.
+Stack: single outer agent + Qwen LLM + ChromaDB + hybrid retrieval (BM25 + vector) + FastAPI + Vue frontend.
+
+### Commands
 
 ```bash
-# Install dependencies
-uv sync
-
-# Add new dependency
-uv add <package>
-
-# Run indexing test
-uv run python -m src.rag_agent.indexing.index_builder
-
-# Run tests
-uv run pytest tests/
-
-# Lint & format
-uv run ruff check src/
-uv run ruff format src/
-
-# Run with specific Python version
-uv run python main.py <args>
+uv sync                          # Install dependencies
+uv add <pkg>                     # Add a dependency
+uv run python main.py            # Run CLI agent
+uv run python main.py "<query>"  # One-shot query
+uv run python -m domain.knowledge.indexing.index_builder  # Rebuild index
+uv run uvicorn api_view.web_main:app --reload             # Backend
+cd frontend && npm run dev       # Frontend
+uv run pytest tests/             # Tests
+uv run ruff check/format src/ tests/  # Lint & format
 ```
 
-## Environment Configuration
-
-Copy `.env.example` to `.env` and set required API keys:
-- `QWEN_API_KEY` - Qwen/DashScope API key (required)
-- `DASHSCOPE_API_KEY` - Alternative API key (optional)
-- `EMBEDDING_MODEL` - Embedding model (default: `tongyi-embedding-vision-flash-2026-03-06`)
-
-All settings are in `src/rag_agent/config.py` via Pydantic Settings — never hardcode config values.
-
-## Architecture
+### Architecture Flow
 
 ```
-用户查询
-    │
-    ▼
-数据处理 (data_processing/) ───► 文档加载 ─► 分块 ─► 元数据增强
-    │
-    ▼
-索引构建 (indexing/) ───► DashScope 嵌入 ─► ChromaDB 持久化
-    │
-    ▼
-向量检索 ─► 生成回答
+user → outer agent → knowledge_workflow_tool → KnowledgeWorkflowService
+  ├─ decomposition → routing → (rewrite if general) → hybrid retrieval
+  └─ returns retrieval_context + evidence_bundle to agent for final answer
 ```
+
+Entry points: `main.py` (CLI), `src/agent/__main__.py` (package CLI), `api_view/web_main.py` (FastAPI), `frontend/src/App.vue` (Vue).
 
 ### Module Map
 
-| Module | File | Purpose |
-|--------|------|---------|
-| `data_processing/` | `loader.py` | Document loading (Markdown) |
-| `data_processing/` | `chunker.py` | Two-level chunking (college → major → section) |
-| `data_processing/` | `metadata.py` | Metadata extraction and enrichment |
-| `indexing/` | `index_builder.py` | ChromaDB index builder with caching, deduplication, metadata filtering |
-| `indexing/` | `embeddings.py` | DashScope MultiModalEmbedding wrapper |
-| `utils/` | `path.py` | Path utilities (get_project_root, get_data_dir, etc.) |
-| `config.py` | Settings | Pydantic Settings singleton |
+| Module | Purpose |
+|--------|---------|
+| `agent/` | Outer agent, workflow orchestration, tool boundary |
+| `agent/middleware/` | Inject thread memory into agent |
+| `api_view/` | FastAPI routes and chat service |
+| `domain/knowledge/ingestion/` | Document loading, chunking, metadata |
+| `domain/knowledge/indexing/` | ChromaDB indexing and embeddings |
+| `domain/knowledge/retrieval/` | Hybrid search, BM25, academy map, config |
+| `memory/` | Persistent thread memory, session, compaction |
+| `llm/` | Model setup, health probes, prompts |
+| `utils/` | Paths, errors, text, time helpers |
 
-### File Structure
+### Code Standards
 
-```
-src/rag_agent/
-├── __init__.py
-├── config.py              # Settings (API keys, paths)
-├── data_processing/
-│   ├── __init__.py
-│   ├── loader.py          # load_document(), load_documents()
-│   ├── chunker.py         # split_by_college(), split_by_major(), chunk_documents()
-│   └── metadata.py        # extract_*(), compute_parent_id(), enrich_*()
-├── indexing/
-│   ├── __init__.py
-│   ├── index_builder.py   # IndexBuilder class (build, load, search, metadata_filtered_search)
-│   └── embeddings.py     # DashScopeEmbeddings class
-└── utils/
-    ├── __init__.py
-    └── path.py            # get_project_root(), get_data_dir(), get_raw_data_dir()
-```
+- Keep files under 500 lines when practical.
+- Code, comments, docstrings in `src/` and `tests/` in chinese.
+- Use path helpers from `src/utils/paths.py`.
+- Use `uv` for package management.
+- Do not hardcode API keys, model names, or absolute paths.
+- Copy `.env.example` to `.env` — do not add new vars without updating it.
 
-### Critical Dependency Chains
+### Architectural Constraints
 
-- `index_builder.py` → `embeddings.py` → `dashscope`
-- `index_builder.py` → `utils/path.py` → `get_data_dir()`
-- `data_processing/` → Document metadata (parent_id, college, major, section)
+- No `domain -> agent` imports.
+- `knowledge_workflow_tool` is the outer agent's sole business tool boundary.
+- Thread memory owned inside `memory/`.
+- Workflow returns retrieval evidence + structured trace; outer agent owns final answer.
 
-### Data Flow
+### Testing
 
-```python
-# 1. Load documents
-docs = load_documents(get_raw_data_dir())
-
-# 2. Chunk documents (college + major with children)
-parents, children = chunk_documents(docs)
-all_chunks = parents + children
-
-# 3. Build or load index (with deduplication)
-builder = IndexBuilder()
-builder.load_or_build_index(all_chunks)
-
-# 4. Similarity search
-results = builder.similarity_search("计算机科学与技术", k=5)
-
-# 5. Metadata filtered search
-results = builder.metadata_filtered_search(
-    query="培养目标",
-    filters={"college": "信息工程学院"},
-    k=5
-)
-```
-
-### Chunk Metadata Convention
-
-Each document chunk carries metadata for deduplication and filtering:
-
-| Key | Description |
-|-----|-------------|
-| `parent_id` | MD5 hash of `college` or `college:major` (stable across re-runs) |
-| `doc_type` | `"parent"` or `"child"` |
-| `doc_level` | `"college"` or `"major"` |
-| `college` | College name (extracted from ## header) |
-| `major` | Major name (extracted from ### header) |
-| `section` | Section name (extracted from #### header) |
-| `chunk_index` | Index within parent document (for children) |
-| `source` | Source file path |
-| `filename` | Source filename |
-
-### IndexBuilder Features
-
-1. **Caching**: Loads existing index from `data/vector_index/` if present
-2. **Deduplication**: Skips chunks with duplicate `parent_id`
-3. **Auto-persist**: ChromaDB auto-saves via `persist_directory`
-4. **Metadata filtering**: `metadata_filtered_search(query, filters, k)` for field-based filtering
-
-### DashScope Embeddings
-
-Using `tongyi-embedding-vision-flash-2026-03-06` (multimodal model, text-only mode):
-
-```python
-DashScopeEmbeddings(
-    model="tongyi-embedding-vision-flash-2026-03-06",  # or from EMBEDDING_MODEL env
-    dimension=768,  # Supported: 64, 128, 256, 512, 768
-    api_key=None    # Auto-read from DASHSCOPE_API_KEY or QWEN_API_KEY
-)
-```
-
-### Path Utilities (Required)
-
-**必须**使用 `src/rag_agent/utils/path.py` 中的工具函数处理路径：
-
-```python
-from rag_agent.utils.path import get_project_root, get_data_dir, get_raw_data_dir
-
-get_project_root()  # → D:\ziruo_project\rag_project
-get_data_dir()       # → .../data
-get_raw_data_dir()   # → .../data/raw
-```
-
-**禁止硬编码路径**，所有路径操作必须通过工具函数
-
-### ChromaDB Patterns
-
-- Use `persist_directory` for persistence
-- Use `collection_name` to organize data (default: `rag_collection`)
-- Metadata filtering: `vectorstore.get(where={"college": "信息工程学院"})`
-- Deduplication: Check `parent_id` before adding
-
-## Code Standards
-
-### File Line Limit
-
-- No single code file shall exceed **500 lines**
-- Files exceeding 500 lines must be split by functionality into separate files (e.g., into `nodes/`, `tools/`, `utils/` subdirectories)
-- Splitting principle: one file per clearly-defined functional module
-
-### Class-Based Modules
-
-Follow the `all-in-rag` pattern:
-
-```python
-class MyModule:
-    def __init__(self, deps):
-        self.deps = deps
-        self.setup_xxx()
-
-    def setup_xxx(self):
-        logger.info("Setting up...")
-```
-
-### Configuration
-
-All runtime config lives in `.env`, loaded via `pydantic_settings.BaseSettings` in `config.py`. Do not add new environment variables without updating `.env.example`.
-
-### UV Package Management
-
-This project uses **UV** for Python package management.
+Prefer focused unit tests, API-level tests, workflow orchestration tests, memory injection tests.
+Avoid brittle end-to-end LLM assertions.
 
 ```bash
-uv add <package>           # Add dependency
-uv sync                    # Install from pyproject.toml
-uv lock                    # Update lock file
+uv run pytest tests/test_workflows/ tests/test_agent/ tests/test_app/ tests/test_memory/
 ```
-
-### Language
-
-All code, comments, and documentation in `src/` and `scripts/` use **English**. Knowledge base source files (`*.md` in `data/raw/`) use Chinese.

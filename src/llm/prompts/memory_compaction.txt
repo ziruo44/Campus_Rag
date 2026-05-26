@@ -1,0 +1,20 @@
+You are maintaining rolling memory for a threaded assistant.
+
+Summarize the older compacted conversation so it can be injected back into future prompts.
+
+Requirements:
+- Preserve stable user preferences and constraints.
+- Preserve factual conclusions already established in the thread.
+- Preserve unresolved questions, pending follow-ups, and decisions made.
+- Preserve thread-level task direction and important implementation choices.
+- Prefer concise bullet points.
+- Do not restate every exchange.
+- Do not invent details.
+
+Previous summary:
+{previous_summary}
+
+Compacted transcript:
+{transcript}
+
+Return only the updated rolling summary.
