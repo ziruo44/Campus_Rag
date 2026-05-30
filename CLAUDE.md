@@ -79,7 +79,7 @@ uv sync                          # Install dependencies
 uv add <pkg>                     # Add a dependency
 uv run python main.py            # Run CLI agent
 uv run python main.py "<query>"  # One-shot query
-uv run python -m domain.knowledge.indexing.index_builder  # Rebuild index
+uv run python -m domain.major_knowledge.indexing.index_builder  # Rebuild index
 uv run uvicorn api_view.web_main:app --reload             # Backend
 cd frontend && npm run dev       # Frontend
 uv run pytest tests/             # Tests
@@ -103,9 +103,9 @@ Entry points: `main.py` (CLI), `src/agent/__main__.py` (package CLI), `api_view/
 | `agent/` | Outer agent, workflow orchestration, tool boundary |
 | `agent/middleware/` | Inject thread memory into agent |
 | `api_view/` | FastAPI routes and chat service |
-| `domain/knowledge/ingestion/` | Document loading, chunking, metadata |
-| `domain/knowledge/indexing/` | ChromaDB indexing and embeddings |
-| `domain/knowledge/retrieval/` | Hybrid search, BM25, academy map, config |
+| `domain/major_knowledge/ingestion/` | Document loading, chunking, metadata |
+| `domain/major_knowledge/indexing/` | ChromaDB indexing and embeddings |
+| `domain/major_knowledge/retrieval/` | Hybrid search, BM25, academy map, config |
 | `memory/` | Persistent thread memory, session, compaction |
 | `llm/` | Model setup, health probes, prompts |
 | `utils/` | Paths, errors, text, time helpers |

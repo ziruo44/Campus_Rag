@@ -7,10 +7,12 @@ import sys
 from typing import Sequence
 
 from api_view.services.chat_service import ChatService
-from agent.workflows.service import KnowledgeWorkflowService
-from domain.knowledge.retrieval.bm25_index import prewarm_jieba
+from domain.major_knowledge.retrieval.bm25_index import prewarm_jieba
+from domain.life_guide_knowledge.retrieval.bm25_index import prewarm_jieba as prewarm_life_guide_jieba
 from memory.config import MemorySettings
 from memory.session import ManagedThread, SessionManager
+from agent.workflows.life_guide_service import LifeGuideWorkflowService
+from agent.workflows.service import MajorKnowledgeWorkflowService
 
 _WELCOME_BANNER = """
 Campus Knowledge CLI
@@ -71,9 +73,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = MemorySettings(
         compaction_notice_callback=_print_compaction_notice,
     )
-    workflow_service = KnowledgeWorkflowService()
+    major_workflow_service = MajorKnowledgeWorkflowService()
+    life_guide_workflow_service = LifeGuideWorkflowService()
     chat_service = ChatService(
-        workflow_service,
+        major_workflow_service,
+        life_guide_workflow_service,
         session_manager_factory=lambda: SessionManager(settings),
     )
 
@@ -91,10 +95,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             thread.attach_reference(args.attach_thread)
 
         if args.message:
-            _prewarm_cli_runtime(workflow_service)
+            _prewarm_cli_runtime(
+                major_workflow_service,
+                life_guide_workflow_service,
+            )
             return _run_one_shot(chat_service, thread, args.message)
 
-        _prewarm_cli_runtime(workflow_service)
+        _prewarm_cli_runtime(
+            major_workflow_service,
+            life_guide_workflow_service,
+        )
         return _run_interactive(chat_service, manager, thread)
 
 
@@ -350,19 +360,26 @@ def _print_thread_status(thread: ManagedThread) -> None:
         print(f"Summary: {thread.summary}")
 
 
-def _prewarm_cli_runtime(workflow_service: KnowledgeWorkflowService) -> None:
-    """Prewarm retrieval runtime so first-turn latency is lower in the CLI."""
+def _prewarm_cli_runtime(
+    major_workflow_service: MajorKnowledgeWorkflowService,
+    life_guide_workflow_service: LifeGuideWorkflowService,
+) -> None:
+    """预热两套知识库运行时，降低 CLI 首轮延迟。"""
     prewarm_jieba()
-    if workflow_service.is_initialized:
+    prewarm_life_guide_jieba()
+    if major_workflow_service.is_initialized and life_guide_workflow_service.is_initialized:
         return
 
-    print("Prewarming knowledge runtime...")
+    print("Prewarming knowledge runtimes...")
     try:
-        workflow_service.ensure_initialized()
+        if not major_workflow_service.is_initialized:
+            major_workflow_service.ensure_initialized()
+        if not life_guide_workflow_service.is_initialized:
+            life_guide_workflow_service.ensure_initialized()
     except Exception as exc:
         print(f"Runtime prewarm failed: {exc}")
     else:
-        print("Knowledge runtime ready.")
+        print("Knowledge runtimes ready.")
 
 
 def _print_compaction_notice(payload: dict) -> None:

@@ -13,6 +13,8 @@ build/
 
 # Environment (contains API keys)
 .env
+.env.*
+!.env.example
 docs/
 
 # Dependencies (use pyproject.toml, not lock files in git)

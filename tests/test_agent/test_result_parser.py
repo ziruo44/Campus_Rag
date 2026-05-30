@@ -35,7 +35,7 @@ def test_build_knowledge_turn_result_extracts_answer_and_artifacts() -> None:
             tool_calls=[
                 {
                     "id": "call_framework",
-                    "name": "knowledge_workflow_tool",
+                    "name": "major_retrieve_tool",
                     "args": {"query": "AI major"},
                     "type": "tool_call",
                 }

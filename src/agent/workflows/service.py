@@ -1,4 +1,4 @@
-"""Shared knowledge workflow orchestration reused by CLI and FastAPI."""
+"""专业知识工作流服务。"""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from agent.workflows.steps.decomposition import (
 from agent.workflows.steps.retrieval import build_retrieval_context, run_retrieval_step
 from agent.workflows.steps.rewrite import build_query_rewrite_step, run_query_rewrite_step
 from agent.workflows.steps.routing import build_router_step, run_routing_step
-from domain.knowledge.retrieval.filters import extract_query_filters
-from domain.knowledge.runtime import KnowledgeRuntime
+from domain.major_knowledge.retrieval.filters import extract_query_filters
+from domain.major_knowledge.runtime import KnowledgeRuntime, RuntimeUnavailableError
 from llm.health import ModelProviderHealthProbe, ModelProviderHealthResult
 from llm.model import model as default_llm
 from shared.observability.performance import (
@@ -28,8 +28,8 @@ from shared.observability.performance import (
 logger = logging.getLogger(__name__)
 
 
-class KnowledgeWorkflowService:
-    """Orchestrate routed retrieval over the shared knowledge runtime."""
+class MajorKnowledgeWorkflowService:
+    """面向专业知识库的工作流编排服务。"""
 
     def __init__(
         self,
@@ -47,11 +47,11 @@ class KnowledgeWorkflowService:
 
     @property
     def is_initialized(self) -> bool:
-        """Whether the workflow runtime has been initialized."""
+        """运行时是否已经初始化。"""
         return self._runtime.is_initialized
 
     def ensure_initialized(self) -> None:
-        """Initialize shared runtime assets lazily."""
+        """按需初始化专业知识库运行时。"""
         self._runtime.ensure_initialized()
 
     def execute(
@@ -60,7 +60,7 @@ class KnowledgeWorkflowService:
         user_query: str,
         retrieval_context_strategy: str = "passthrough",
     ) -> dict[str, Any]:
-        """Run the knowledge workflow and return structured orchestration output."""
+        """执行专业知识工作流并返回结构化结果。"""
         self.ensure_initialized()
         self._ensure_steps()
 
@@ -86,7 +86,7 @@ class KnowledgeWorkflowService:
         self,
         check_connection: bool = False,
     ) -> ModelProviderHealthResult:
-        """Return model-provider configuration and optional live connectivity status."""
+        """返回模型提供方配置与可选连通性状态。"""
         return self._health_probe.probe(check_connection=check_connection)
 
     def _resolve_queries(
@@ -197,3 +197,13 @@ class KnowledgeWorkflowService:
                 }
             )
         return evidence
+
+
+KnowledgeWorkflowService = MajorKnowledgeWorkflowService
+
+__all__ = [
+    "MajorKnowledgeWorkflowService",
+    "KnowledgeWorkflowService",
+    "ModelProviderHealthResult",
+    "RuntimeUnavailableError",
+]

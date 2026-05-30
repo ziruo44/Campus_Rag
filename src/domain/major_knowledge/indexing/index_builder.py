@@ -8,8 +8,8 @@ from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
-from domain.knowledge.indexing.config import IndexingSettings
-from domain.knowledge.indexing.embeddings import DashScopeEmbeddings
+from domain.major_knowledge.indexing.config import IndexingSettings
+from domain.major_knowledge.indexing.embeddings import DashScopeEmbeddings
 from utils.paths import get_chroma_db_dir
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class IndexBuilder:
         index_save_path: str | None = None,
         embedding_model: str | None = _settings.embedding_model,
         dimension: int = _settings.embedding_dimension,
-        collection_name: str = "rag_collection",
+        collection_name: str = "majors_collection",
     ) -> None:
         self.index_save_path = index_save_path or str(get_chroma_db_dir())
         self.collection_name = collection_name

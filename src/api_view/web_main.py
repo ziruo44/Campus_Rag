@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from agent.workflows.service import RuntimeUnavailableError
 from api_view.api.chat import router as chat_router
 from api_view.api.health import router as health_router
 from api_view.services.chat_service import (
@@ -15,7 +14,8 @@ from api_view.services.chat_service import (
     ThreadNotFoundError,
     TurnNotFoundError,
 )
-from app_bootstrap import get_knowledge_runtime
+from app_bootstrap import get_life_guide_runtime, get_major_knowledge_runtime
+from domain.major_knowledge.runtime import RuntimeUnavailableError
 from memory.locks import LockTimeoutError
 
 
@@ -25,7 +25,8 @@ def create_app(*, prewarm_runtime: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if prewarm_runtime:
-            get_knowledge_runtime().ensure_initialized()
+            get_major_knowledge_runtime().ensure_initialized()
+            get_life_guide_runtime().ensure_initialized()
         yield
 
     app = FastAPI(title="RAG Agent API", version="0.1.0", lifespan=lifespan)

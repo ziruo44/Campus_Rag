@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from domain.knowledge.retrieval.hybrid_search import HybridRetriever
+from domain.major_knowledge.retrieval.hybrid_search import HybridRetriever
 
 
 def extract_query_filters(retriever: HybridRetriever, query: str) -> dict[str, str]:

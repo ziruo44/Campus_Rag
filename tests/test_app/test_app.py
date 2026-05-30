@@ -12,9 +12,11 @@ import api_view.web_main as web_main_module
 from agent.main_agent import CampusKnowledgeAgent
 from app_bootstrap import (
     get_chat_service,
-    get_knowledge_runtime,
+    get_life_guide_runtime,
+    get_life_guide_workflow_service,
+    get_major_knowledge_runtime,
+    get_major_workflow_service,
     get_model_health_probe,
-    get_workflow_service,
 )
 from api_view.services.chat_service import ChatService
 from api_view.web_main import create_app
@@ -43,14 +45,21 @@ class StubWorkflowService:
 
     def __init__(
         self,
+        *,
         answer: str = "stub answer",
         should_fail: bool = False,
         provider_health: ModelProviderHealthResult | None = None,
+        route_trace: list[str] | None = None,
+        tool_name: str = "general_retrieval_tool",
+        source: str = "stub.md",
     ) -> None:
         self.answer = answer
         self.should_fail = should_fail
         self.is_initialized = True
         self._chat_model = object()
+        self.route_trace = route_trace or ["detail"]
+        self.tool_name = tool_name
+        self.source = source
         self.provider_health = provider_health or ModelProviderHealthResult(
             configured=True,
             checked=False,
@@ -64,26 +73,26 @@ class StubWorkflowService:
         return None
 
     def execute(self, *, user_query, retrieval_context_strategy="compressed"):
-        del user_query, retrieval_context_strategy
+        del retrieval_context_strategy
         if self.should_fail:
             raise RuntimeError("runtime boom")
         evidence = {
             "content": "stub retrieval context",
-            "source": "stub.md",
-            "metadata": {"source": "stub.md"},
+            "source": self.source,
+            "metadata": {"source": self.source},
         }
         trace = {
             "step": "retrieval",
             "source": "retrieval",
-            "tool_name": "general_retrieval_tool",
-            "tool_args": {"query": "hello"},
+            "tool_name": self.tool_name,
+            "tool_args": {"query": user_query},
             "tool_output": "stub retrieval context",
         }
         return {
             "retrieval_context": "stub retrieval context",
             "evidence_bundle": [evidence],
             "resolved_queries": [],
-            "route_trace": [],
+            "route_trace": self.route_trace,
             "workflow_trace": [trace],
         }
 
@@ -135,7 +144,7 @@ class FakeFrameworkAgent:
                     tool_calls=[
                         {
                             "id": "call_framework",
-                            "name": "knowledge_workflow_tool",
+                            "name": "major_retrieve_tool",
                             "args": {},
                             "type": "tool_call",
                         }
@@ -147,47 +156,72 @@ class FakeFrameworkAgent:
         }
 
 
-def create_test_client(tmp_path: Path, workflow_service: StubWorkflowService | None = None) -> TestClient:
+def create_test_client(
+    tmp_path: Path,
+    major_workflow_service: StubWorkflowService | None = None,
+    life_guide_workflow_service: StubWorkflowService | None = None,
+) -> TestClient:
     """Create a TestClient with dependency overrides."""
     import agent.main_agent as ma
 
     app = create_app(prewarm_runtime=False)
     settings = build_settings(tmp_path)
-    resolved_workflow_service = workflow_service or StubWorkflowService()
-    stub_runtime = StubKnowledgeRuntime(is_initialized=resolved_workflow_service.is_initialized)
-    stub_health_probe = StubModelHealthProbe(resolved_workflow_service.provider_health)
+    resolved_major_workflow_service = major_workflow_service or StubWorkflowService()
+    resolved_life_guide_workflow_service = life_guide_workflow_service or StubWorkflowService(
+        route_trace=["life_guide"],
+        tool_name="life_guide_retrieval_tool",
+        source="生活指南.md",
+    )
+    stub_major_runtime = StubKnowledgeRuntime(
+        is_initialized=resolved_major_workflow_service.is_initialized
+    )
+    stub_life_runtime = StubKnowledgeRuntime(
+        is_initialized=resolved_life_guide_workflow_service.is_initialized
+    )
+    stub_health_probe = StubModelHealthProbe(resolved_major_workflow_service.provider_health)
 
     def fake_create_agent(*, model, tools, system_prompt, middleware, name):
         del model, system_prompt, middleware, name
-        return FakeFrameworkAgent(resolved_workflow_service, tools[0])
+        return FakeFrameworkAgent(resolved_major_workflow_service, tools[0])
 
     ma.create_agent = fake_create_agent
 
     service = ChatService(
-        workflow_service=resolved_workflow_service,
+        major_workflow_service=resolved_major_workflow_service,
+        life_guide_workflow_service=resolved_life_guide_workflow_service,
         session_manager_factory=lambda: SessionManager(settings),
     )
-    service.agent = CampusKnowledgeAgent(resolved_workflow_service)
-    app.dependency_overrides[get_workflow_service] = lambda: resolved_workflow_service
-    app.dependency_overrides[get_knowledge_runtime] = lambda: stub_runtime
+    service.agent = CampusKnowledgeAgent(
+        resolved_major_workflow_service,
+        resolved_life_guide_workflow_service,
+    )
+    app.dependency_overrides[get_major_workflow_service] = lambda: resolved_major_workflow_service
+    app.dependency_overrides[get_life_guide_workflow_service] = lambda: resolved_life_guide_workflow_service
+    app.dependency_overrides[get_major_knowledge_runtime] = lambda: stub_major_runtime
+    app.dependency_overrides[get_life_guide_runtime] = lambda: stub_life_runtime
     app.dependency_overrides[get_model_health_probe] = lambda: stub_health_probe
     app.dependency_overrides[get_chat_service] = lambda: service
     return TestClient(app)
 
 
-def test_app_startup_warms_knowledge_runtime(tmp_path: Path) -> None:
-    stub_runtime = StubKnowledgeRuntime(is_initialized=False)
-    original_factory = web_main_module.get_knowledge_runtime
-    web_main_module.get_knowledge_runtime = lambda: stub_runtime
+def test_app_startup_warms_both_knowledge_runtimes(tmp_path: Path) -> None:
+    stub_major_runtime = StubKnowledgeRuntime(is_initialized=False)
+    stub_life_runtime = StubKnowledgeRuntime(is_initialized=False)
+    original_major_factory = web_main_module.get_major_knowledge_runtime
+    original_life_factory = web_main_module.get_life_guide_runtime
+    web_main_module.get_major_knowledge_runtime = lambda: stub_major_runtime
+    web_main_module.get_life_guide_runtime = lambda: stub_life_runtime
     app = create_app(prewarm_runtime=True)
 
     try:
         with TestClient(app):
             pass
     finally:
-        web_main_module.get_knowledge_runtime = original_factory
+        web_main_module.get_major_knowledge_runtime = original_major_factory
+        web_main_module.get_life_guide_runtime = original_life_factory
 
-    assert stub_runtime.ensure_initialized_calls == 1
+    assert stub_major_runtime.ensure_initialized_calls == 1
+    assert stub_life_runtime.ensure_initialized_calls == 1
 
 
 def test_health_returns_basic_status(tmp_path: Path) -> None:
@@ -214,7 +248,7 @@ def test_health_can_probe_model_provider_connectivity(tmp_path: Path) -> None:
             detail="Model provider responded successfully.",
         )
     )
-    client = create_test_client(tmp_path, workflow_service=workflow_service)
+    client = create_test_client(tmp_path, major_workflow_service=workflow_service)
 
     response = client.get("/health?check_model=true")
 
@@ -236,7 +270,7 @@ def test_health_reports_degraded_when_model_probe_fails(tmp_path: Path) -> None:
             detail="tls handshake failed",
         )
     )
-    client = create_test_client(tmp_path, workflow_service=workflow_service)
+    client = create_test_client(tmp_path, major_workflow_service=workflow_service)
 
     response = client.get("/health?check_model=true")
 
@@ -357,7 +391,10 @@ def test_missing_thread_returns_404(tmp_path: Path) -> None:
 
 
 def test_chat_failure_marks_turn_failed(tmp_path: Path) -> None:
-    client = create_test_client(tmp_path, workflow_service=StubWorkflowService(should_fail=True))
+    client = create_test_client(
+        tmp_path,
+        major_workflow_service=StubWorkflowService(should_fail=True),
+    )
 
     response = client.post("/api/chat", json={"message": "hello"})
 
@@ -382,7 +419,10 @@ def test_chat_returns_503_for_model_connection_errors(tmp_path: Path) -> None:
             request = httpx.Request("POST", "https://example.com/v1/chat/completions")
             raise httpx.ConnectError("tls handshake failed", request=request)
 
-    client = create_test_client(tmp_path, workflow_service=ConnectionErrorWorkflowService())
+    client = create_test_client(
+        tmp_path,
+        major_workflow_service=ConnectionErrorWorkflowService(),
+    )
 
     response = client.post("/api/chat", json={"message": "hello"})
 

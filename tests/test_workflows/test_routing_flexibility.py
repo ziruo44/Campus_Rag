@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 from agent.workflows.steps.decomposition import detect_decomposition_rule_based
 from agent.workflows.steps.retrieval import retrieve_route_documents
 from agent.workflows.steps.routing import _classify_query_rule_based
-from domain.knowledge.retrieval.hybrid_search import HybridRetriever
+from domain.major_knowledge.retrieval.hybrid_search import HybridRetriever
 
 
 class FakeIndexBuilder:

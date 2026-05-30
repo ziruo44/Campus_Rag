@@ -5,7 +5,7 @@ from __future__ import annotations
 from langchain_core.documents import Document
 
 from agent.workflows.steps.retrieval import retrieve_route_documents
-from domain.knowledge.retrieval.hybrid_search import HybridRetriever
+from domain.major_knowledge.retrieval.hybrid_search import HybridRetriever
 
 
 class FakeIndexBuilder:

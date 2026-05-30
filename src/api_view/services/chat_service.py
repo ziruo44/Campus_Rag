@@ -12,9 +12,15 @@ from openai import APIConnectionError, APITimeoutError
 
 from agent.main_agent import CampusKnowledgeAgent
 from agent.result_parser import build_knowledge_turn_result
-from agent.workflows.service import KnowledgeWorkflowService
+from agent.workflows.life_guide_service import LifeGuideWorkflowService
+from agent.workflows.service import MajorKnowledgeWorkflowService
 from api_view.web_config import ChatStreamChunk
-from domain.knowledge.runtime import RuntimeUnavailableError
+from domain.life_guide_knowledge.runtime import (
+    RuntimeUnavailableError as LifeGuideRuntimeUnavailableError,
+)
+from domain.major_knowledge.runtime import (
+    RuntimeUnavailableError as MajorRuntimeUnavailableError,
+)
 from memory.session import ManagedThread, SessionManager
 from shared.observability.performance import (
     finish_trace,
@@ -56,11 +62,16 @@ class ChatService:
 
     def __init__(
         self,
-        workflow_service: KnowledgeWorkflowService,
+        major_workflow_service: MajorKnowledgeWorkflowService,
+        life_guide_workflow_service: LifeGuideWorkflowService,
         session_manager_factory: Callable[[], SessionManager] | None = None,
     ) -> None:
-        self.workflow_service = workflow_service
-        self.agent = CampusKnowledgeAgent(workflow_service)
+        self.major_workflow_service = major_workflow_service
+        self.life_guide_workflow_service = life_guide_workflow_service
+        self.agent = CampusKnowledgeAgent(
+            major_workflow_service,
+            life_guide_workflow_service,
+        )
         self.session_manager_factory = session_manager_factory or SessionManager
 
     def chat(
@@ -343,13 +354,20 @@ class ChatService:
 
     def _normalize_execution_exception(self, exc: Exception) -> Exception:
         """Normalize runtime exceptions into API-facing chat errors."""
-        if isinstance(exc, (RuntimeUnavailableError, ChatExecutionError)):
+        if isinstance(
+            exc,
+            (
+                MajorRuntimeUnavailableError,
+                LifeGuideRuntimeUnavailableError,
+                ChatExecutionError,
+            ),
+        ):
             return exc
 
         if isinstance(exc, (APIConnectionError, APITimeoutError, httpx.HTTPError)):
             detail = self._describe_exception(exc)
             logger.exception("Model provider request failed")
-            return RuntimeUnavailableError(f"Model provider request failed: {detail}")
+            return MajorRuntimeUnavailableError(f"Model provider request failed: {detail}")
 
         detail = self._describe_exception(exc)
         if detail:

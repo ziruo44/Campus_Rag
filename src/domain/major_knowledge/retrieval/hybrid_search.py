@@ -7,9 +7,9 @@ from typing import Any
 
 from langchain_core.documents import Document
 
-from domain.knowledge.retrieval.bm25_index import BM25Indexer
-from domain.knowledge.retrieval.config import RetrievalSettings
-from domain.knowledge.retrieval.metadata import (
+from domain.major_knowledge.retrieval.bm25_index import BM25Indexer
+from domain.major_knowledge.retrieval.config import RetrievalSettings
+from domain.major_knowledge.retrieval.metadata import (
     COLLEGE_FIELDS,
     MAJOR_FIELDS,
     SECTION_FIELDS,

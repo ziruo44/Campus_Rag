@@ -5,7 +5,7 @@ from typing import List
 
 from langchain_core.documents import Document
 
-from domain.knowledge.retrieval.metadata import (
+from domain.major_knowledge.retrieval.metadata import (
     COLLEGE_FIELDS,
     MAJOR_FIELDS,
     get_metadata_field,

@@ -6,9 +6,9 @@ import logging
 from threading import Lock
 from typing import Any
 
-from domain.knowledge.ingestion import chunk_documents, load_documents
-from domain.knowledge.indexing import IndexBuilder
-from domain.knowledge.retrieval.hybrid_search import HybridRetriever
+from domain.major_knowledge.ingestion import chunk_documents, load_documents
+from domain.major_knowledge.indexing import IndexBuilder
+from domain.major_knowledge.retrieval.hybrid_search import HybridRetriever
 from shared.observability.performance import measure_stage
 from utils.paths import get_raw_data_dir
 

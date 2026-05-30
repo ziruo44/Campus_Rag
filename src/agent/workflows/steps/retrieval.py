@@ -7,12 +7,12 @@ import re
 from langchain_core.documents import Document
 
 from agent.workflows.models import RetrievalStepResult, WorkflowTraceEvent
-from domain.knowledge.retrieval.academy_map import (
+from domain.major_knowledge.retrieval.academy_map import (
     build_academy_majors_map,
     get_all_colleges,
 )
-from domain.knowledge.retrieval.filters import extract_query_filters
-from domain.knowledge.retrieval.hybrid_search import HybridRetriever
+from domain.major_knowledge.retrieval.filters import extract_query_filters
+from domain.major_knowledge.retrieval.hybrid_search import HybridRetriever
 from utils.text import truncate_text
 
 DEFAULT_ROUTE_TOP_K = {

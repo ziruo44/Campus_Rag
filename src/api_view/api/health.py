@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, Query
 
 from api_view.web_config import HealthResponse, ModelProviderHealthResponse
 from app_bootstrap import get_knowledge_runtime, get_model_health_probe
-from domain.knowledge.runtime import KnowledgeRuntime
+from domain.major_knowledge.runtime import KnowledgeRuntime
 from llm.health import ModelProviderHealthProbe
 from memory.config import MemorySettings
-from utils.paths import get_data_dir, get_raw_data_dir
+from utils.paths import get_chroma_db_dir, get_raw_data_dir
 
 router = APIRouter(tags=["health"])
 
@@ -25,7 +25,7 @@ def health(
 ) -> HealthResponse:
     """Return application health and optional upstream model connectivity."""
     memory_settings = MemorySettings()
-    vector_index_path = get_data_dir() / "vector_index"
+    vector_index_path = get_chroma_db_dir()
     raw_data_exists = get_raw_data_dir().exists()
     vector_index_exists = vector_index_path.exists()
     memory_dir_accessible = memory_settings.session_dir.parent.exists()

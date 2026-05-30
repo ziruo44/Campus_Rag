@@ -9,9 +9,9 @@ from agent.workflows.steps.decomposition import detect_decomposition_rule_based
 from agent.workflows.steps.retrieval import build_retrieval_context
 from agent.workflows.steps.rewrite import rewrite_query_rule_based, should_rewrite_query
 from agent.workflows.steps.routing import _classify_query_rule_based
-from domain.knowledge import runtime as runtime_module
-from domain.knowledge.retrieval.hybrid_search import HybridRetriever
-from domain.knowledge.retrieval.metadata import (
+from domain.major_knowledge import runtime as runtime_module
+from domain.major_knowledge.retrieval.hybrid_search import HybridRetriever
+from domain.major_knowledge.retrieval.metadata import (
     COLLEGE_FIELDS,
     MAJOR_FIELDS,
     SECTION_FIELDS,
@@ -128,7 +128,7 @@ def test_workflow_service_execute_returns_structured_trace(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "agent.workflows.steps.retrieval.retrieve_route_documents",
-        lambda retriever, *, route, query: [
+        lambda retriever, *, route, query, parent_documents=None: [
             Document(page_content="doc content", metadata={"major": "AI", "source": "major.md"})
         ],
     )

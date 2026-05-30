@@ -27,8 +27,10 @@ def build_settings(tmp_path: Path) -> MemorySettings:
 
 
 class StubWorkflowService:
-    def __init__(self) -> None:
+    def __init__(self, *, route: str = "detail", tool_name: str = "detail_retrieval_tool") -> None:
         self._chat_model = object()
+        self.route = route
+        self.tool_name = tool_name
 
     def execute(self, *, user_query, retrieval_context_strategy="compressed"):
         del retrieval_context_strategy
@@ -40,7 +42,7 @@ class StubWorkflowService:
         trace = {
             "step": "retrieval",
             "source": "retrieval",
-            "tool_name": "detail_retrieval_tool",
+            "tool_name": self.tool_name,
             "tool_args": {"query": user_query},
             "tool_output": "retrieval context",
         }
@@ -48,9 +50,9 @@ class StubWorkflowService:
             "retrieval_context": "retrieval context",
             "evidence_bundle": [evidence],
             "resolved_queries": [
-                {"route": "detail", "source_query": user_query}
+                {"route": self.route, "source_query": user_query}
             ],
-            "route_trace": ["detail"],
+            "route_trace": [self.route],
             "workflow_trace": [trace],
         }
 
@@ -124,9 +126,13 @@ def test_memory_builder_keeps_pending_turn_in_active_window(tmp_path: Path) -> N
     assert replayed_human_messages == ["pending-question"]
 
 
-def test_outer_agent_uses_framework_agent_and_tool_output(monkeypatch, tmp_path: Path) -> None:
+def test_outer_agent_registers_three_tools_and_uses_major_tool(monkeypatch, tmp_path: Path) -> None:
     settings = build_settings(tmp_path)
-    workflow_service = StubWorkflowService()
+    major_workflow_service = StubWorkflowService()
+    life_guide_workflow_service = StubWorkflowService(
+        route="life_guide",
+        tool_name="life_guide_retrieval_tool",
+    )
     chat_model = object()
 
     class FakeFrameworkAgent:
@@ -144,7 +150,7 @@ def test_outer_agent_uses_framework_agent_and_tool_output(monkeypatch, tmp_path:
                         tool_calls=[
                             {
                                 "id": "call_framework",
-                                "name": "knowledge_workflow_tool",
+                                "name": "major_retrieve_tool",
                                 "args": {"query": "What are the job prospects?"},
                                 "type": "tool_call",
                             }
@@ -178,7 +184,8 @@ def test_outer_agent_uses_framework_agent_and_tool_output(monkeypatch, tmp_path:
         del latest_turn
 
         agent = CampusKnowledgeAgent(
-            workflow_service,
+            major_workflow_service,
+            life_guide_workflow_service,
             chat_model=chat_model,
         )
         result = agent.invoke(
@@ -189,11 +196,13 @@ def test_outer_agent_uses_framework_agent_and_tool_output(monkeypatch, tmp_path:
     assert captured["model"] is chat_model
     assert captured["name"] == "campus-baiduren-agent"
     assert captured["tool_names"] == [
-        "knowledge_workflow_tool",
+        "major_retrieve_tool",
+        "life_guide_retrieve_tool",
         "campus_navigation_tool",
     ]
     assert captured["middleware_names"] == ["NavigationHumanReviewMiddleware"]
-    assert "校园摆渡人" in str(captured["system_prompt"])
+    assert "major_retrieve_tool" in str(captured["system_prompt"])
+    assert "life_guide_retrieve_tool" in str(captured["system_prompt"])
     assert isinstance(result["messages"][-1], AIMessage)
     assert result["messages"][-1].content == "final summarized answer"
     assert any(
@@ -205,7 +214,11 @@ def test_outer_agent_uses_framework_agent_and_tool_output(monkeypatch, tmp_path:
 
 def test_outer_agent_does_not_duplicate_latest_user_message(monkeypatch, tmp_path: Path) -> None:
     settings = build_settings(tmp_path)
-    workflow_service = StubWorkflowService()
+    major_workflow_service = StubWorkflowService()
+    life_guide_workflow_service = StubWorkflowService(
+        route="life_guide",
+        tool_name="life_guide_retrieval_tool",
+    )
 
     class InspectingFrameworkAgent:
         def invoke(self, payload):
@@ -230,7 +243,11 @@ def test_outer_agent_does_not_duplicate_latest_user_message(monkeypatch, tmp_pat
         thread.complete_turn(old_turn, "old-answer")
         thread.append_user_turn("latest-question")
 
-        agent = CampusKnowledgeAgent(workflow_service, chat_model=object())
+        agent = CampusKnowledgeAgent(
+            major_workflow_service,
+            life_guide_workflow_service,
+            chat_model=object(),
+        )
         result = agent.invoke(thread, "latest-question")
 
     assert isinstance(result["messages"][-1], AIMessage)
