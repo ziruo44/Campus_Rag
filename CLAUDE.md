@@ -7,7 +7,7 @@ This file provides guidance to coding agents working in this repository. It has 
 
 ## Behavioral Guidelines
 
-These rules reduce common LLM coding mistakes. They bias toward caution over speed — for trivial tasks, use judgment.
+These rules reduce common LLM coding mistakes. They bias toward caution over speed; for trivial tasks, use judgment.
 
 ### 1. Think Before Coding
 
@@ -15,7 +15,7 @@ These rules reduce common LLM coding mistakes. They bias toward caution over spe
 
 Before implementing:
 - State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them — don't pick silently.
+- If multiple interpretations exist, present them; don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
 - If something is unclear, stop. Name what's confusing. Ask.
 
@@ -39,7 +39,7 @@ When editing existing code:
 - Don't "improve" adjacent code, comments, or formatting.
 - Don't refactor things that aren't broken.
 - Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it — don't delete it.
+- If you notice unrelated dead code, mention it; don't delete it.
 
 When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
@@ -52,15 +52,15 @@ The test: Every changed line should trace directly to the user's request.
 **Define success criteria. Loop until verified.**
 
 Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
+- "Add validation" -> "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" -> "Write a test that reproduces it, then make it pass"
+- "Refactor X" -> "Ensure tests pass before and after"
 
 For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
+```text
+1. [Step] -> verify: [check]
+2. [Step] -> verify: [check]
+3. [Step] -> verify: [check]
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
@@ -80,32 +80,38 @@ uv add <pkg>                     # Add a dependency
 uv run python main.py            # Run CLI agent
 uv run python main.py "<query>"  # One-shot query
 uv run python -m domain.major_knowledge.indexing.index_builder  # Rebuild index
-uv run uvicorn api_view.web_main:app --reload             # Backend
+uv run uvicorn api_view.web_main:app --reload                   # Backend
 cd frontend && npm run dev       # Frontend
 uv run pytest tests/             # Tests
-uv run ruff check/format src/ tests/  # Lint & format
+uv run ruff check src/ tests/    # Lint
+uv run ruff format src/ tests/   # Format
 ```
 
 ### Architecture Flow
 
-```
-user → outer agent → knowledge_workflow_tool → KnowledgeWorkflowService
-  ├─ decomposition → routing → (rewrite if general) → hybrid retrieval
-  └─ returns retrieval_context + evidence_bundle to agent for final answer
+```text
+HTTP/API -> api_view routers/dependencies -> application use cases -> agent/domain
+user -> outer agent -> knowledge_workflow_tool -> KnowledgeWorkflowService
+  |- decomposition -> routing -> (rewrite if general) -> hybrid retrieval
+  `- returns retrieval_context + evidence_bundle to agent for final answer
 ```
 
-Entry points: `main.py` (CLI), `src/agent/__main__.py` (package CLI), `api_view/web_main.py` (FastAPI), `frontend/src/App.vue` (Vue).
+Entry points: `main.py` (CLI), `src/agent/__main__.py` (package CLI), `src/api_view/web_main.py` (FastAPI), `frontend/src/App.vue` (Vue).
 
 ### Module Map
 
 | Module | Purpose |
 |--------|---------|
+| `application/` | API-facing use cases for chat, threads, and streaming |
 | `agent/` | Outer agent, workflow orchestration, tool boundary |
 | `agent/middleware/` | Inject thread memory into agent |
-| `api_view/` | FastAPI routes and chat service |
+| `api_view/routers/` | FastAPI route groups for `/campus/...` |
+| `api_view/schemas/` | Request/response models split by domain |
+| `api_view/` | HTTP dependency wiring, SSE formatting, exception mapping |
 | `domain/major_knowledge/ingestion/` | Document loading, chunking, metadata |
 | `domain/major_knowledge/indexing/` | ChromaDB indexing and embeddings |
 | `domain/major_knowledge/retrieval/` | Hybrid search, BM25, academy map, config |
+| `domain/runtime_base.py` | Shared lazy-runtime initialization skeleton |
 | `memory/` | Persistent thread memory, session, compaction |
 | `llm/` | Model setup, health probes, prompts |
 | `utils/` | Paths, errors, text, time helpers |
@@ -113,18 +119,20 @@ Entry points: `main.py` (CLI), `src/agent/__main__.py` (package CLI), `api_view/
 ### Code Standards
 
 - Keep files under 500 lines when practical.
-- Code, comments, docstrings in `src/` and `tests/` in chinese.
+- Code, comments, docstrings in `src/` and `tests/` in Chinese.
 - Use path helpers from `src/utils/paths.py`.
 - Use `uv` for package management.
 - Do not hardcode API keys, model names, or absolute paths.
-- Copy `.env.example` to `.env` — do not add new vars without updating it.
+- Copy `.env.example` to `.env`; do not add new vars without updating it.
 
 ### Architectural Constraints
 
+- Dependency direction: `api/http -> application -> agent/domain -> infrastructure`.
 - No `domain -> agent` imports.
 - `knowledge_workflow_tool` is the outer agent's sole business tool boundary.
 - Thread memory owned inside `memory/`.
 - Workflow returns retrieval evidence + structured trace; outer agent owns final answer.
+- Use `/campus/...` as the canonical HTTP API surface.
 
 ### Testing
 

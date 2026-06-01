@@ -1,14 +1,15 @@
-"""Shared knowledge runtime for documents, indexes, and retrievers."""
+"""专业知识库运行时。"""
 
 from __future__ import annotations
 
 import logging
-from threading import Lock
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 from domain.major_knowledge.ingestion import chunk_documents, load_documents
 from domain.major_knowledge.indexing import IndexBuilder
 from domain.major_knowledge.retrieval.hybrid_search import HybridRetriever
+from domain.runtime_base import LazyRuntimeBase
 from shared.observability.performance import measure_stage
 from utils.paths import get_raw_data_dir
 
@@ -19,83 +20,82 @@ class RuntimeUnavailableError(RuntimeError):
     """Raised when the shared knowledge runtime cannot be initialized."""
 
 
-class KnowledgeRuntime:
-    """Lazy runtime container for shared retrieval assets."""
+class KnowledgeRuntime(LazyRuntimeBase):
+    """延迟初始化的专业知识检索运行时。"""
 
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._initialized = False
+    def __init__(
+        self,
+        *,
+        raw_data_dir_factory: Callable[[], Path] | None = None,
+        document_loader: Callable[[Path], list[Any]] | None = None,
+        document_chunker: Callable[[list[Any]], tuple[list[Any], list[Any]]] | None = None,
+        index_builder_factory: Callable[[], IndexBuilder] | None = None,
+        retriever_factory: Callable[..., HybridRetriever] | None = None,
+    ) -> None:
+        super().__init__(
+            stage_prefix="knowledge_runtime",
+            failure_message="Failed to initialize knowledge runtime.",
+            log_name="knowledge runtime",
+        )
+        self._raw_data_dir_factory = raw_data_dir_factory
+        self._document_loader = document_loader
+        self._document_chunker = document_chunker
+        self._index_builder_factory = index_builder_factory
+        self._retriever_factory = retriever_factory
         self._parent_documents: list[Any] = []
         self._child_documents: list[Any] = []
-        self._parent_document_map: dict[str, Any] = {}
         self._index_builder: IndexBuilder | None = None
         self._retriever: HybridRetriever | None = None
 
     @property
-    def is_initialized(self) -> bool:
-        """Whether the runtime has been initialized."""
-        return self._initialized
-
-    @property
     def retriever(self) -> HybridRetriever:
-        """Return the shared retriever instance."""
+        """返回共享检索器实例。"""
         if self._retriever is None:
             raise RuntimeUnavailableError("Shared retriever is not initialized.")
         return self._retriever
 
     @property
     def parent_documents(self) -> list[Any]:
-        """Return parent documents retained outside the vector index."""
+        """返回父文档。"""
         return list(self._parent_documents)
 
     @property
     def child_documents(self) -> list[Any]:
-        """Return child chunks used for indexing and retrieval."""
+        """返回索引与检索使用的子块。"""
         return list(self._child_documents)
 
-    def ensure_initialized(self) -> None:
-        """Initialize documents, vector index, and the shared retriever."""
-        if self._initialized:
-            return
+    @property
+    def runtime_error_class(self):
+        return RuntimeUnavailableError
 
-        with measure_stage("knowledge_runtime.ensure_initialized"):
-            with self._lock:
-                if self._initialized:
-                    return
+    def _initialize_once(self) -> None:
+        raw_data_dir_factory = self._raw_data_dir_factory or get_raw_data_dir
+        document_loader = self._document_loader or load_documents
+        document_chunker = self._document_chunker or chunk_documents
+        index_builder_factory = self._index_builder_factory or IndexBuilder
+        retriever_factory = self._retriever_factory or HybridRetriever
 
-                try:
-                    with measure_stage("knowledge_runtime.load_documents"):
-                        docs = load_documents(get_raw_data_dir())
-                    with measure_stage("knowledge_runtime.chunk_documents"):
-                        parents, children = chunk_documents(docs)
-                    self._parent_documents = parents
-                    self._child_documents = children
-                    self._parent_document_map = {
-                        doc.metadata.get("parent_id"): doc
-                        for doc in parents
-                        if doc.metadata.get("parent_id")
-                    }
+        with measure_stage("knowledge_runtime.load_documents"):
+            docs = document_loader(raw_data_dir_factory())
+        with measure_stage("knowledge_runtime.chunk_documents"):
+            parents, children = document_chunker(docs)
+        self._parent_documents = parents
+        self._child_documents = children
 
-                    builder = IndexBuilder()
-                    with measure_stage("knowledge_runtime.load_or_build_index"):
-                        builder.load_or_build_index(self._child_documents)
-                    self._index_builder = builder
+        builder = index_builder_factory()
+        with measure_stage("knowledge_runtime.load_or_build_index"):
+            builder.load_or_build_index(self._child_documents)
+        self._index_builder = builder
 
-                    with measure_stage("knowledge_runtime.build_shared_retriever"):
-                        self._retriever = HybridRetriever(
-                            builder,
-                            self._child_documents,
-                            parent_documents=self._parent_documents,
-                        )
+        with measure_stage("knowledge_runtime.build_shared_retriever"):
+            self._retriever = retriever_factory(
+                builder,
+                self._child_documents,
+                parent_documents=self._parent_documents,
+            )
 
-                    self._initialized = True
-                    logger.info(
-                        "Knowledge runtime initialized with %s parent docs and %s child chunks",
-                        len(self._parent_documents),
-                        len(self._child_documents),
-                    )
-                except Exception as exc:
-                    logger.exception("Failed to initialize knowledge runtime")
-                    raise RuntimeUnavailableError(
-                        "Failed to initialize knowledge runtime."
-                    ) from exc
+        logger.info(
+            "Knowledge runtime initialized with %s parent docs and %s child chunks",
+            len(self._parent_documents),
+            len(self._child_documents),
+        )

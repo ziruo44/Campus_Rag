@@ -1,64 +1,31 @@
-"""Chat service shared by the CLI and FastAPI routes."""
+"""对话兼容服务层。"""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-import logging
-from typing import Any, Callable
+from typing import Callable
 
-import httpx
-from openai import APIConnectionError, APITimeoutError
-
-from agent.main_agent import CampusKnowledgeAgent
-from agent.result_parser import build_knowledge_turn_result
 from agent.workflows.life_guide_service import LifeGuideWorkflowService
 from agent.workflows.service import MajorKnowledgeWorkflowService
-from api_view.web_config import ChatStreamChunk
-from domain.life_guide_knowledge.runtime import (
-    RuntimeUnavailableError as LifeGuideRuntimeUnavailableError,
-)
-from domain.major_knowledge.runtime import (
-    RuntimeUnavailableError as MajorRuntimeUnavailableError,
+from application.chat import (
+    ChatCoordinator,
+    ChatExecutionError,
+    ChatTurnResult,
+    DeleteThreadUseCase,
+    DeleteTurnUseCase,
+    GetThreadUseCase,
+    ListThreadsUseCase,
+    SendMessageUseCase,
+    StreamMessageEvent,
+    StreamMessageUseCase,
+    ThreadNotFoundError,
+    TurnNotFoundError,
 )
 from memory.session import ManagedThread, SessionManager
-from shared.observability.performance import (
-    finish_trace,
-    mark_first_token,
-    measure_stage,
-    record_thread_turn_count,
-    set_thread_id,
-    start_trace,
-)
-from utils.errors import format_exception_message
-
-logger = logging.getLogger(__name__)
-
-
-class ThreadNotFoundError(FileNotFoundError):
-    """Raised when a requested thread does not exist."""
-
-
-class TurnNotFoundError(FileNotFoundError):
-    """Raised when a requested turn does not exist."""
-
-
-class ChatExecutionError(RuntimeError):
-    """Raised when a single chat turn fails."""
-
-
-@dataclass(slots=True)
-class ChatTurnResult:
-    """Structured chat result for one completed turn."""
-
-    thread_id: str
-    answer: str
-    messages: list[Any]
-    artifacts: dict[str, Any]
 
 
 class ChatService:
-    """Coordinate thread resolution and agent invocation."""
+    """保留给 CLI 与旧依赖使用的兼容封装。"""
 
     def __init__(
         self,
@@ -66,310 +33,85 @@ class ChatService:
         life_guide_workflow_service: LifeGuideWorkflowService,
         session_manager_factory: Callable[[], SessionManager] | None = None,
     ) -> None:
-        self.major_workflow_service = major_workflow_service
-        self.life_guide_workflow_service = life_guide_workflow_service
-        self.agent = CampusKnowledgeAgent(
-            major_workflow_service,
-            life_guide_workflow_service,
+        self.coordinator = ChatCoordinator(
+            major_workflow_service=major_workflow_service,
+            life_guide_workflow_service=life_guide_workflow_service,
+            session_manager_factory=session_manager_factory,
         )
-        self.session_manager_factory = session_manager_factory or SessionManager
+        self.send_message_use_case = SendMessageUseCase(self.coordinator)
+        self.stream_message_use_case = StreamMessageUseCase(self.coordinator)
+        self.list_threads_use_case = ListThreadsUseCase(self.coordinator)
+        self.get_thread_use_case = GetThreadUseCase(self.coordinator)
+        self.delete_thread_use_case = DeleteThreadUseCase(self.coordinator)
+        self.delete_turn_use_case = DeleteTurnUseCase(self.coordinator)
+
+    @property
+    def agent(self):
+        """兼容测试替换 agent 的旧写法。"""
+        return self.coordinator.agent
+
+    @agent.setter
+    def agent(self, value) -> None:
+        self.coordinator.agent = value
 
     def chat(
         self,
         message: str,
         thread_id: str | None = None,
-        precise_mode: bool = False,
     ) -> ChatTurnResult:
-        """Open or create a thread and run a single chat turn."""
-        normalized_thread_id = self._normalize_thread_id(thread_id)
-        with self.session_manager_factory() as manager:
-            thread = self._resolve_thread(manager, normalized_thread_id)
-            return self.invoke_thread(thread, message, precise_mode=precise_mode)
+        """执行单轮非流式对话。"""
+        return self.send_message_use_case.execute(
+            message=message,
+            thread_id=thread_id,
+        )
 
     def stream_chat(
         self,
         message: str,
         thread_id: str | None = None,
-        precise_mode: bool = False,
-    ) -> AsyncIterator[ChatStreamChunk]:
-        """Open or create a thread and stream one chat turn."""
-        normalized_thread_id = self._normalize_thread_id(thread_id)
-        manager = self.session_manager_factory()
-        trace_handle = start_trace(
-            "chat.stream",
-            thread_id=normalized_thread_id,
-            query=message,
+    ) -> AsyncIterator[StreamMessageEvent]:
+        """执行单轮流式对话。"""
+        return self.stream_message_use_case.execute(
+            message=message,
+            thread_id=thread_id,
         )
-        turn_id: str | None = None
-
-        try:
-            thread = self._resolve_thread(manager, normalized_thread_id)
-            set_thread_id(thread.thread_id)
-            with measure_stage("memory.append_user_turn"):
-                turn_id = thread.append_user_turn(message)
-            record_thread_turn_count(len(thread.turns))
-            raw_result = self.agent.invoke(
-                thread,
-                message,
-                precise_mode=precise_mode,
-            )
-            result = build_knowledge_turn_result(raw_result["messages"])
-        except Exception as exc:
-            if turn_id is not None:
-                resolved_error = self._normalize_execution_exception(exc)
-                with measure_stage("memory.fail_turn"):
-                    thread.fail_turn(turn_id, str(resolved_error))
-                finish_trace(trace_handle, status="failed", error=str(resolved_error))
-                manager.close()
-                raise resolved_error from exc
-            finish_trace(trace_handle, status="failed", error=str(exc))
-            manager.close()
-            raise
-
-        async def iterator() -> AsyncIterator[ChatStreamChunk]:
-            full_answer = ""
-            stream_started = False
-
-            try:
-                stream_started = True
-                yield ChatStreamChunk(
-                    content="",
-                    is_final=False,
-                    thread_id=thread.thread_id,
-                    turn_id=turn_id,
-                )
-
-                chunk_text = result["answer"]
-                if chunk_text:
-                    full_answer += chunk_text
-                    mark_first_token()
-                    yield ChatStreamChunk(
-                        content=chunk_text,
-                        is_final=False,
-                        thread_id=thread.thread_id,
-                        turn_id=turn_id,
-                    )
-
-                with measure_stage("memory.complete_turn"):
-                    thread.complete_turn_with_artifacts(
-                        turn_id,
-                        full_answer,
-                        artifacts=result["artifacts"],
-                    )
-                finish_trace(trace_handle, status="completed")
-                yield ChatStreamChunk(
-                    content="",
-                    is_final=True,
-                    thread_id=thread.thread_id,
-                    turn_id=turn_id,
-                )
-            except Exception as exc:
-                resolved_error = self._normalize_execution_exception(exc)
-                with measure_stage("memory.fail_turn"):
-                    thread.fail_turn(turn_id, str(resolved_error))
-                finish_trace(trace_handle, status="failed", error=str(resolved_error))
-                if stream_started:
-                    yield ChatStreamChunk(
-                        content="",
-                        is_final=True,
-                        thread_id=thread.thread_id,
-                        turn_id=turn_id,
-                        error=str(resolved_error),
-                    )
-                    return
-                raise resolved_error from exc
-            finally:
-                manager.close()
-
-        return iterator()
 
     def invoke_thread(
         self,
         thread: ManagedThread,
         message: str,
-        *,
-        precise_mode: bool = False,
     ) -> ChatTurnResult:
-        """Run a single chat turn on an explicit thread."""
-        trace_handle = start_trace(
-            "chat.invoke",
-            thread_id=thread.thread_id,
-            query=message,
+        """在显式线程上执行单轮对话。"""
+        return self.coordinator.invoke_thread(
+            thread,
+            message,
         )
-        with measure_stage("memory.append_user_turn"):
-            turn_id = thread.append_user_turn(message)
-        record_thread_turn_count(len(thread.turns))
-        try:
-            raw_result = self.agent.invoke(
-                thread,
-                message,
-                precise_mode=precise_mode,
-            )
-            result = build_knowledge_turn_result(raw_result["messages"])
-            with measure_stage("memory.complete_turn"):
-                thread.complete_turn_with_artifacts(
-                    turn_id,
-                    result["answer"],
-                    artifacts=result["artifacts"],
-                )
-            finish_trace(trace_handle, status="completed")
-            return ChatTurnResult(
-                thread_id=thread.thread_id,
-                answer=result["answer"],
-                messages=result["messages"],
-                artifacts=result["artifacts"],
-            )
-        except Exception as exc:
-            resolved_error = self._normalize_execution_exception(exc)
-            with measure_stage("memory.fail_turn"):
-                thread.fail_turn(turn_id, str(resolved_error))
-            finish_trace(trace_handle, status="failed", error=str(resolved_error))
-            raise resolved_error from exc
 
-    def get_thread(self, thread_id: str) -> dict[str, Any]:
-        """Fetch thread state by ID."""
-        normalized_thread_id = self._normalize_thread_id(thread_id)
-        if normalized_thread_id is None:
-            raise ThreadNotFoundError("Thread not found.")
-        with self.session_manager_factory() as manager:
-            try:
-                thread = manager.open_thread(normalized_thread_id)
-            except FileNotFoundError as exc:
-                raise ThreadNotFoundError(
-                    f"Thread not found: {normalized_thread_id}"
-                ) from exc
-            return thread.to_dict()
+    def get_thread(self, thread_id: str) -> dict:
+        """返回线程详情。"""
+        return self.get_thread_use_case.execute(thread_id=thread_id)
 
-    def list_threads(self) -> list[dict[str, Any]]:
-        """Return summarized thread metadata for history listings."""
-        with self.session_manager_factory() as manager:
-            summaries: list[dict[str, Any]] = []
-            for thread_id in manager.list_threads():
-                thread = manager.open_thread(thread_id, read_only=True)
-                payload = thread.to_dict()
-                turns = payload.get("turns", [])
-                summaries.append(
-                    {
-                        "thread_id": payload["thread_id"],
-                        "title": payload.get("title", "") or "New Session",
-                        "summary": payload.get("summary", ""),
-                        "updated_at": payload.get("updated_at", ""),
-                        "turn_count": len(turns),
-                        "preview": self._build_preview(payload),
-                    }
-                )
-
-            return sorted(
-                summaries,
-                key=lambda item: item["updated_at"],
-                reverse=True,
-            )
+    def list_threads(self) -> list[dict]:
+        """返回线程摘要列表。"""
+        return self.list_threads_use_case.execute()
 
     def delete_thread(self, thread_id: str) -> None:
-        """Delete a persisted thread JSON document."""
-        normalized_thread_id = self._normalize_thread_id(thread_id)
-        if normalized_thread_id is None:
-            raise ThreadNotFoundError("Thread not found.")
+        """删除线程。"""
+        self.delete_thread_use_case.execute(thread_id=thread_id)
 
-        with self.session_manager_factory() as manager:
-            try:
-                manager.delete_thread(normalized_thread_id)
-            except FileNotFoundError as exc:
-                raise ThreadNotFoundError(
-                    f"Thread not found: {normalized_thread_id}"
-                ) from exc
+    def delete_turn(self, thread_id: str, turn_id: str) -> dict:
+        """删除一轮问答。"""
+        return self.delete_turn_use_case.execute(
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
 
-    def delete_turn(self, thread_id: str, turn_id: str) -> dict[str, Any]:
-        """Delete one user turn and the paired assistant answer."""
-        normalized_thread_id = self._normalize_thread_id(thread_id)
-        normalized_turn_id = self._normalize_turn_id(turn_id)
-        if normalized_thread_id is None:
-            raise ThreadNotFoundError("Thread not found.")
-        if normalized_turn_id is None:
-            raise TurnNotFoundError("Turn not found.")
 
-        with self.session_manager_factory() as manager:
-            try:
-                thread = manager.open_thread(normalized_thread_id)
-            except FileNotFoundError as exc:
-                raise ThreadNotFoundError(
-                    f"Thread not found: {normalized_thread_id}"
-                ) from exc
-
-            try:
-                thread.delete_turn(normalized_turn_id)
-            except ValueError as exc:
-                raise TurnNotFoundError(f"Turn not found: {normalized_turn_id}") from exc
-
-            return thread.to_dict()
-
-    def _resolve_thread(
-        self,
-        manager: SessionManager,
-        thread_id: str | None,
-    ) -> ManagedThread:
-        if thread_id is None:
-            return manager.create_new_thread(switch=False)
-        try:
-            return manager.open_thread(thread_id)
-        except FileNotFoundError as exc:
-            raise ThreadNotFoundError(f"Thread not found: {thread_id}") from exc
-
-    def _normalize_thread_id(self, thread_id: str | None) -> str | None:
-        """Normalize optional thread IDs from external clients."""
-        if thread_id is None:
-            return None
-        normalized = thread_id.strip()
-        return normalized or None
-
-    def _normalize_turn_id(self, turn_id: str | None) -> str | None:
-        if turn_id is None:
-            return None
-        normalized = turn_id.strip()
-        return normalized or None
-
-    def _build_preview(self, payload: dict[str, Any]) -> str:
-        """Build a compact preview string for a thread."""
-        summary = str(payload.get("summary", "")).strip()
-        if summary:
-            return summary[:96]
-
-        turns = list(payload.get("turns", []))
-        for turn in reversed(turns):
-            assistant = turn.get("assistant_message") or {}
-            assistant_content = str(assistant.get("content", "")).strip()
-            if assistant_content:
-                return assistant_content.replace("\n", " ")[:96]
-
-            user = turn.get("user_message") or {}
-            user_content = str(user.get("content", "")).strip()
-            if user_content:
-                return user_content.replace("\n", " ")[:96]
-
-        return "Empty session"
-
-    def _describe_exception(self, exc: BaseException) -> str:
-        """Return the deepest non-empty exception message for diagnostics."""
-        return format_exception_message(exc)
-
-    def _normalize_execution_exception(self, exc: Exception) -> Exception:
-        """Normalize runtime exceptions into API-facing chat errors."""
-        if isinstance(
-            exc,
-            (
-                MajorRuntimeUnavailableError,
-                LifeGuideRuntimeUnavailableError,
-                ChatExecutionError,
-            ),
-        ):
-            return exc
-
-        if isinstance(exc, (APIConnectionError, APITimeoutError, httpx.HTTPError)):
-            detail = self._describe_exception(exc)
-            logger.exception("Model provider request failed")
-            return MajorRuntimeUnavailableError(f"Model provider request failed: {detail}")
-
-        detail = self._describe_exception(exc)
-        if detail:
-            return ChatExecutionError(f"Failed to execute chat request: {detail}")
-        return ChatExecutionError("Failed to execute chat request.")
+__all__ = [
+    "ChatExecutionError",
+    "ChatService",
+    "ChatTurnResult",
+    "StreamMessageEvent",
+    "ThreadNotFoundError",
+    "TurnNotFoundError",
+]

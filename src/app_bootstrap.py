@@ -1,4 +1,4 @@
-"""应用启动工厂。"""
+"""应用启动装配。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,14 @@ from functools import lru_cache
 
 from agent.workflows.life_guide_service import LifeGuideWorkflowService
 from agent.workflows.service import MajorKnowledgeWorkflowService
+from application.chat import (
+    DeleteThreadUseCase,
+    DeleteTurnUseCase,
+    GetThreadUseCase,
+    ListThreadsUseCase,
+    SendMessageUseCase,
+    StreamMessageUseCase,
+)
 from api_view.services.chat_service import ChatService
 from domain.life_guide_knowledge.runtime import LifeGuideKnowledgeRuntime
 from domain.major_knowledge.runtime import KnowledgeRuntime
@@ -55,6 +63,36 @@ def get_chat_service() -> ChatService:
         major_workflow_service=get_major_workflow_service(),
         life_guide_workflow_service=get_life_guide_workflow_service(),
     )
+
+
+def get_send_message_use_case() -> SendMessageUseCase:
+    """返回共享的发送消息用例。"""
+    return get_chat_service().send_message_use_case
+
+
+def get_stream_message_use_case() -> StreamMessageUseCase:
+    """返回共享的流式消息用例。"""
+    return get_chat_service().stream_message_use_case
+
+
+def get_list_threads_use_case() -> ListThreadsUseCase:
+    """返回共享的线程列表用例。"""
+    return get_chat_service().list_threads_use_case
+
+
+def get_get_thread_use_case() -> GetThreadUseCase:
+    """返回共享的线程详情用例。"""
+    return get_chat_service().get_thread_use_case
+
+
+def get_delete_thread_use_case() -> DeleteThreadUseCase:
+    """返回共享的删除线程用例。"""
+    return get_chat_service().delete_thread_use_case
+
+
+def get_delete_turn_use_case() -> DeleteTurnUseCase:
+    """返回共享的删除轮次用例。"""
+    return get_chat_service().delete_turn_use_case
 
 
 def get_knowledge_runtime() -> KnowledgeRuntime:

@@ -46,6 +46,11 @@ def get_query_decomposition_prompt() -> str:
     return load_prompt("query_decomposition.txt")
 
 
+def get_outer_agent_system_prompt() -> str:
+    """Get outer agent system prompt."""
+    return load_prompt("outer_agent_system.txt")
+
+
 def get_memory_compaction_prompt() -> str:
     """Get memory compaction prompt."""
     return load_prompt("memory_compaction.txt")

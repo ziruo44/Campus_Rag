@@ -1,7 +1,7 @@
 import type {
   ChatRequest,
   ChatResponse,
-  ChatStreamChunk,
+  ChatStreamEvent,
   ThreadListItem,
   ThreadResponse,
 } from "../types/chat";
@@ -32,16 +32,14 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 export async function sendChat(
   message: string,
-  preciseMode = false,
   threadId?: string,
 ): Promise<ChatResponse> {
   const body: ChatRequest = {
     message,
-    precise_mode: preciseMode,
     ...(threadId ? { thread_id: threadId } : {}),
   };
 
-  const response = await fetch("/api/chat", {
+  const response = await fetch("/campus/messages", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
@@ -50,32 +48,48 @@ export async function sendChat(
   return parseJson<ChatResponse>(response);
 }
 
-function parseSseChunk(rawEvent: string): ChatStreamChunk | null {
+function parseSseChunk(rawEvent: string): ChatStreamEvent | null {
+  const eventLines = rawEvent
+    .split("\n")
+    .filter((line) => line.startsWith("event:"))
+    .map((line) => line.slice(6).trim());
+
   const dataLines = rawEvent
     .split("\n")
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart());
 
+  const eventName = eventLines[eventLines.length - 1];
   if (dataLines.length === 0) {
     return null;
   }
 
-  return JSON.parse(dataLines.join("\n")) as ChatStreamChunk;
+  if (
+    eventName !== "start" &&
+    eventName !== "delta" &&
+    eventName !== "done" &&
+    eventName !== "error"
+  ) {
+    return null;
+  }
+
+  return {
+    event: eventName,
+    ...(JSON.parse(dataLines.join("\n")) as Omit<ChatStreamEvent, "event">),
+  } as ChatStreamEvent;
 }
 
 export async function sendChatStream(
   message: string,
-  onChunk: (chunk: ChatStreamChunk) => void,
-  preciseMode = false,
+  onChunk: (chunk: ChatStreamEvent) => void,
   threadId?: string,
 ): Promise<void> {
   const body: ChatRequest = {
     message,
-    precise_mode: preciseMode,
     ...(threadId ? { thread_id: threadId } : {}),
   };
 
-  const response = await fetch("/api/chat/stream", {
+  const response = await fetch("/campus/messages/stream", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
@@ -127,7 +141,7 @@ export async function sendChatStream(
 }
 
 export async function fetchThread(threadId: string): Promise<ThreadResponse> {
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, {
+  const response = await fetch(`/campus/threads/${encodeURIComponent(threadId)}`, {
     method: "GET",
   });
 
@@ -135,7 +149,7 @@ export async function fetchThread(threadId: string): Promise<ThreadResponse> {
 }
 
 export async function fetchThreads(): Promise<ThreadListItem[]> {
-  const response = await fetch("/api/threads", {
+  const response = await fetch("/campus/threads", {
     method: "GET",
   });
 
@@ -143,7 +157,7 @@ export async function fetchThreads(): Promise<ThreadListItem[]> {
 }
 
 export async function deleteThread(threadId: string): Promise<void> {
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, {
+  const response = await fetch(`/campus/threads/${encodeURIComponent(threadId)}`, {
     method: "DELETE",
   });
   await parseJson<void>(response);
@@ -154,7 +168,7 @@ export async function deleteTurn(
   turnId: string,
 ): Promise<ThreadResponse> {
   const response = await fetch(
-    `/api/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`,
+    `/campus/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`,
     {
       method: "DELETE",
     },
@@ -164,6 +178,6 @@ export async function deleteTurn(
 }
 
 export async function checkHealth(): Promise<boolean> {
-  const response = await fetch("/health", { method: "GET" });
+  const response = await fetch("/campus/health", { method: "GET" });
   return response.ok;
 }

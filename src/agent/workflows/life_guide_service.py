@@ -38,11 +38,11 @@ class LifeGuideWorkflowService:
     @property
     def is_initialized(self) -> bool:
         """运行时是否已经初始化。"""
-        return self._runtime.is_initialized
+        return self.runtime.is_initialized
 
     def ensure_initialized(self) -> None:
         """按需初始化生活指南运行时。"""
-        self._runtime.ensure_initialized()
+        self.runtime.ensure_initialized()
 
     def execute(
         self,
@@ -52,9 +52,10 @@ class LifeGuideWorkflowService:
     ) -> dict[str, Any]:
         """执行生活指南检索工作流并返回结构化结果。"""
         self.ensure_initialized()
+        runtime = self.runtime
 
         with measure_stage("tool.life_guide_retrieval_tool"):
-            documents = self._runtime.retriever.hybrid_search(user_query, top_k=_TOP_K)
+            documents = runtime.retriever.hybrid_search(user_query, top_k=_TOP_K)
 
         increment_tool_calls(1)
         record_retrieval_results("life_guide_retrieval_tool", len(documents))
@@ -92,6 +93,11 @@ class LifeGuideWorkflowService:
     ) -> ModelProviderHealthResult:
         """返回模型提供方配置与可选连通性状态。"""
         return self._health_probe.probe(check_connection=check_connection)
+
+    @property
+    def runtime(self) -> LifeGuideKnowledgeRuntime:
+        """按需返回运行时实例。"""
+        return self._runtime
 
     def _build_retrieval_context(
         self,

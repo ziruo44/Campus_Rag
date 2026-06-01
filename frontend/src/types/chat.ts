@@ -1,7 +1,6 @@
 export type ChatRequest = {
   message: string;
   thread_id?: string;
-  precise_mode?: boolean;
 };
 
 export type ChatResponse = {
@@ -9,13 +8,36 @@ export type ChatResponse = {
   answer: string;
 };
 
-export type ChatStreamChunk = {
-  content: string;
-  is_final: boolean;
-  thread_id?: string;
-  turn_id?: string;
-  error?: string;
+type ChatStreamEventBase = {
+  thread_id: string;
+  turn_id: string;
 };
+
+export type ChatStreamStartEvent = ChatStreamEventBase & {
+  event: "start";
+};
+
+export type ChatStreamDeltaEvent = ChatStreamEventBase & {
+  event: "delta";
+  content: string;
+};
+
+export type ChatStreamDoneEvent = ChatStreamEventBase & {
+  event: "done";
+  content?: string;
+};
+
+export type ChatStreamErrorEvent = ChatStreamEventBase & {
+  event: "error";
+  error: string;
+  content?: string;
+};
+
+export type ChatStreamEvent =
+  | ChatStreamStartEvent
+  | ChatStreamDeltaEvent
+  | ChatStreamDoneEvent
+  | ChatStreamErrorEvent;
 
 export type ThreadMessageDTO = {
   role: string;
@@ -58,5 +80,18 @@ export type ChatMessage = {
 
 export type ComposerSubmitPayload = {
   message: string;
-  preciseMode: boolean;
+};
+
+export type PendingPromptKind = "navigation_missing" | "navigation_confirm";
+
+export type PendingPrompt = {
+  id: string;
+  kind: PendingPromptKind;
+  eyebrow: string;
+  title: string;
+  description: string;
+  startLocation: string | null;
+  endLocation: string | null;
+  hint: string;
+  suggestions: string[];
 };

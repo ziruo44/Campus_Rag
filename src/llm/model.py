@@ -9,4 +9,5 @@ model = init_chat_model(
     model_provider="openai",
     base_url=_settings.normalized_base_url,
     api_key=_settings.normalized_api_key,
+    streaming=True,
 )

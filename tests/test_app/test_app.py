@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 import api_view.web_main as web_main_module
 from agent.main_agent import CampusKnowledgeAgent
@@ -155,6 +155,59 @@ class FakeFrameworkAgent:
             ]
         }
 
+    async def astream(self, payload, stream_mode=None, version="v2"):
+        del stream_mode, version
+        messages = list(payload["messages"])
+        tool_text = self.tool_callable.invoke({"query": "hello"})
+        tool_call_message = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "call_framework",
+                    "name": "major_retrieve_tool",
+                    "args": {},
+                    "type": "tool_call",
+                }
+            ],
+        )
+        tool_message = ToolMessage(content=tool_text, tool_call_id="call_framework")
+        final_message = AIMessage(content=self.workflow_service.answer)
+
+        yield {
+            "type": "updates",
+            "ns": (),
+            "data": {"model": {"messages": [tool_call_message]}},
+        }
+        yield {
+            "type": "updates",
+            "ns": (),
+            "data": {"tools": {"messages": [tool_message]}},
+        }
+        yield {
+            "type": "messages",
+            "ns": ("major_retrieve_tool", "query_decomposition"),
+            "data": (
+                AIMessageChunk(content="DECOMPOSABLE: false"),
+                {"langgraph_node": "model"},
+            ),
+        }
+
+        for chunk_text in ("stub ", "answer"):
+            yield {
+                "type": "messages",
+                "ns": (),
+                "data": (
+                    AIMessageChunk(content=chunk_text),
+                    {"langgraph_node": "model"},
+                ),
+            }
+
+        yield {
+            "type": "updates",
+            "ns": (),
+            "data": {"model": {"messages": [final_message]}},
+        }
+
 
 def create_test_client(
     tmp_path: Path,
@@ -227,7 +280,7 @@ def test_app_startup_warms_both_knowledge_runtimes(tmp_path: Path) -> None:
 def test_health_returns_basic_status(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
 
-    response = client.get("/health")
+    response = client.get("/campus/health")
 
     assert response.status_code == 200
     payload = response.json()
@@ -250,7 +303,7 @@ def test_health_can_probe_model_provider_connectivity(tmp_path: Path) -> None:
     )
     client = create_test_client(tmp_path, major_workflow_service=workflow_service)
 
-    response = client.get("/health?check_model=true")
+    response = client.get("/campus/health?check_model=true")
 
     assert response.status_code == 200
     payload = response.json()
@@ -272,7 +325,7 @@ def test_health_reports_degraded_when_model_probe_fails(tmp_path: Path) -> None:
     )
     client = create_test_client(tmp_path, major_workflow_service=workflow_service)
 
-    response = client.get("/health?check_model=true")
+    response = client.get("/campus/health?check_model=true")
 
     assert response.status_code == 200
     payload = response.json()
@@ -280,10 +333,10 @@ def test_health_reports_degraded_when_model_probe_fails(tmp_path: Path) -> None:
     assert payload["model_provider"]["detail"] == "tls handshake failed"
 
 
-def test_chat_creates_new_thread_when_thread_id_missing(tmp_path: Path) -> None:
+def test_campus_chat_creates_new_thread_when_thread_id_missing(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
 
-    response = client.post("/api/chat", json={"message": "hello"})
+    response = client.post("/campus/messages", json={"message": "hello"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -293,11 +346,11 @@ def test_chat_creates_new_thread_when_thread_id_missing(tmp_path: Path) -> None:
 
 def test_chat_reuses_existing_thread(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    first = client.post("/api/chat", json={"message": "hello"})
+    first = client.post("/campus/messages", json={"message": "hello"})
     thread_id = first.json()["thread_id"]
 
     second = client.post(
-        "/api/chat",
+        "/campus/messages",
         json={"message": "follow up", "thread_id": thread_id},
     )
 
@@ -305,24 +358,58 @@ def test_chat_reuses_existing_thread(tmp_path: Path) -> None:
     assert second.json()["thread_id"] == thread_id
 
 
-def test_chat_accepts_precise_mode_flag(tmp_path: Path) -> None:
+def test_chat_accepts_request_without_optional_flags(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
 
-    response = client.post(
-        "/api/chat",
-        json={"message": "hello", "precise_mode": True},
-    )
+    response = client.post("/campus/messages", json={"message": "hello"})
 
     assert response.status_code == 200
     assert response.json()["answer"] == "stub answer"
 
 
-def test_get_thread_returns_persisted_turns(tmp_path: Path) -> None:
+def test_campus_stream_returns_named_sse_events(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    chat_response = client.post("/api/chat", json={"message": "hello"})
+
+    response = client.post("/campus/messages/stream", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: start" in response.text
+    assert "event: delta" in response.text
+    assert response.text.count("event: delta") >= 2
+    assert "event: done" in response.text
+    assert '"thread_id"' in response.text
+    assert '"content":"stub "' in response.text
+    assert '"content":"answer"' in response.text
+    assert "DECOMPOSABLE" not in response.text
+
+
+def test_retired_legacy_endpoints_return_404(tmp_path: Path) -> None:
+    client = create_test_client(tmp_path)
+    thread_id = client.post("/campus/messages", json={"message": "hello"}).json()["thread_id"]
+    thread_payload = client.get(f"/campus/threads/{thread_id}").json()
+    turn_id = thread_payload["turns"][0]["turn_id"]
+
+    responses = [
+        client.get("/health"),
+        client.post("/api/chat", json={"message": "hello"}),
+        client.post("/api/chat/stream", json={"message": "hello"}),
+        client.get("/api/threads"),
+        client.get(f"/api/threads/{thread_id}"),
+        client.delete(f"/api/threads/{thread_id}"),
+        client.delete(f"/api/threads/{thread_id}/turns/{turn_id}"),
+    ]
+
+    for response in responses:
+        assert response.status_code == 404
+
+
+def test_campus_get_thread_returns_persisted_turns(tmp_path: Path) -> None:
+    client = create_test_client(tmp_path)
+    chat_response = client.post("/campus/messages", json={"message": "hello"})
     thread_id = chat_response.json()["thread_id"]
 
-    response = client.get(f"/api/threads/{thread_id}")
+    response = client.get(f"/campus/threads/{thread_id}")
 
     assert response.status_code == 200
     payload = response.json()
@@ -333,16 +420,16 @@ def test_get_thread_returns_persisted_turns(tmp_path: Path) -> None:
 
 def test_thread_reload_keeps_full_history_after_more_than_five_rounds(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    first = client.post("/api/chat", json={"message": "hello-0"})
+    first = client.post("/campus/messages", json={"message": "hello-0"})
     thread_id = first.json()["thread_id"]
 
     for index in range(1, 6):
         client.post(
-            "/api/chat",
+            "/campus/messages",
             json={"message": f"hello-{index}", "thread_id": thread_id},
         )
 
-    response = client.get(f"/api/threads/{thread_id}")
+    response = client.get(f"/campus/threads/{thread_id}")
 
     assert response.status_code == 200
     payload = response.json()
@@ -351,16 +438,16 @@ def test_thread_reload_keeps_full_history_after_more_than_five_rounds(tmp_path: 
     assert payload["context_summary"]
 
 
-def test_list_threads_returns_history_summaries(tmp_path: Path) -> None:
+def test_campus_list_threads_returns_history_summaries(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    first = client.post("/api/chat", json={"message": "hello"})
+    first = client.post("/campus/messages", json={"message": "hello"})
     thread_id = first.json()["thread_id"]
     client.post(
-        "/api/chat",
+        "/campus/messages",
         json={"message": "follow up", "thread_id": thread_id},
     )
 
-    response = client.get("/api/threads")
+    response = client.get("/campus/threads")
 
     assert response.status_code == 200
     payload = response.json()
@@ -373,10 +460,10 @@ def test_list_threads_returns_history_summaries(tmp_path: Path) -> None:
 
 def test_get_thread_strips_trailing_whitespace_in_thread_id(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    chat_response = client.post("/api/chat", json={"message": "hello"})
+    chat_response = client.post("/campus/messages", json={"message": "hello"})
     thread_id = chat_response.json()["thread_id"]
 
-    response = client.get(f"/api/threads/{thread_id}%0A")
+    response = client.get(f"/campus/threads/{thread_id}%0A")
 
     assert response.status_code == 200
     assert response.json()["thread_id"] == thread_id
@@ -385,7 +472,7 @@ def test_get_thread_strips_trailing_whitespace_in_thread_id(tmp_path: Path) -> N
 def test_missing_thread_returns_404(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
 
-    response = client.get("/api/threads/missing-thread")
+    response = client.get("/campus/threads/missing-thread")
 
     assert response.status_code == 404
 
@@ -396,7 +483,7 @@ def test_chat_failure_marks_turn_failed(tmp_path: Path) -> None:
         major_workflow_service=StubWorkflowService(should_fail=True),
     )
 
-    response = client.post("/api/chat", json={"message": "hello"})
+    response = client.post("/campus/messages", json={"message": "hello"})
 
     assert response.status_code == 500
 
@@ -424,7 +511,7 @@ def test_chat_returns_503_for_model_connection_errors(tmp_path: Path) -> None:
         major_workflow_service=ConnectionErrorWorkflowService(),
     )
 
-    response = client.post("/api/chat", json={"message": "hello"})
+    response = client.post("/campus/messages", json={"message": "hello"})
 
     assert response.status_code == 503
     assert "Model provider request failed" in response.json()["detail"]
@@ -433,17 +520,17 @@ def test_chat_returns_503_for_model_connection_errors(tmp_path: Path) -> None:
 
 def test_delete_turn_removes_user_and_assistant_messages(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    first = client.post("/api/chat", json={"message": "first question"})
+    first = client.post("/campus/messages", json={"message": "first question"})
     thread_id = first.json()["thread_id"]
     client.post(
-        "/api/chat",
+        "/campus/messages",
         json={"message": "second question", "thread_id": thread_id},
     )
 
-    thread_payload = client.get(f"/api/threads/{thread_id}").json()
+    thread_payload = client.get(f"/campus/threads/{thread_id}").json()
     turn_id = thread_payload["turns"][0]["turn_id"]
 
-    response = client.delete(f"/api/threads/{thread_id}/turns/{turn_id}")
+    response = client.delete(f"/campus/threads/{thread_id}/turns/{turn_id}")
 
     assert response.status_code == 200
     payload = response.json()
@@ -453,9 +540,9 @@ def test_delete_turn_removes_user_and_assistant_messages(tmp_path: Path) -> None
 
 def test_delete_thread_removes_persisted_json(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    thread_id = client.post("/api/chat", json={"message": "hello"}).json()["thread_id"]
+    thread_id = client.post("/campus/messages", json={"message": "hello"}).json()["thread_id"]
 
-    response = client.delete(f"/api/threads/{thread_id}")
+    response = client.delete(f"/campus/threads/{thread_id}")
 
     assert response.status_code == 204
 
@@ -465,7 +552,7 @@ def test_delete_thread_removes_persisted_json(tmp_path: Path) -> None:
 
 def test_chat_persists_turn_artifacts_for_unified_agent_results(tmp_path: Path) -> None:
     client = create_test_client(tmp_path)
-    thread_id = client.post("/api/chat", json={"message": "人工智能专业介绍"}).json()["thread_id"]
+    thread_id = client.post("/campus/messages", json={"message": "人工智能专业介绍"}).json()["thread_id"]
 
     settings = build_settings(tmp_path)
     with SessionManager(settings) as manager:

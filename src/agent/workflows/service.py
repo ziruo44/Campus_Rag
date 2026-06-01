@@ -48,11 +48,11 @@ class MajorKnowledgeWorkflowService:
     @property
     def is_initialized(self) -> bool:
         """运行时是否已经初始化。"""
-        return self._runtime.is_initialized
+        return self.runtime.is_initialized
 
     def ensure_initialized(self) -> None:
         """按需初始化专业知识库运行时。"""
-        self._runtime.ensure_initialized()
+        self.runtime.ensure_initialized()
 
     def execute(
         self,
@@ -113,7 +113,10 @@ class MajorKnowledgeWorkflowService:
 
             retrieval_query = sub_query
             if routing_result.route == "general":
-                has_domain_entity = bool(extract_query_filters(self._runtime.retriever, sub_query))
+                runtime = self.runtime
+                has_domain_entity = bool(
+                    extract_query_filters(runtime.retriever, sub_query)
+                )
                 rewrite_result = run_query_rewrite_step(
                     sub_query,
                     has_domain_entity=has_domain_entity,
@@ -125,11 +128,12 @@ class MajorKnowledgeWorkflowService:
                 retrieval_query = rewrite_result.rewritten_query
 
             with measure_stage(f"tool.{routing_result.route}_retrieval_tool"):
+                runtime = self.runtime
                 retrieval_result = run_retrieval_step(
-                    self._runtime.retriever,
+                    runtime.retriever,
                     route=routing_result.route,
                     query=retrieval_query,
-                    parent_documents=self._runtime.parent_documents,
+                    parent_documents=runtime.parent_documents,
                 )
             increment_tool_calls(1)
             record_retrieval_results(
@@ -173,6 +177,11 @@ class MajorKnowledgeWorkflowService:
                 ]
             )
         return "\n".join(parts)
+
+    @property
+    def runtime(self) -> KnowledgeRuntime:
+        """按需返回运行时实例。"""
+        return self._runtime
 
     def _ensure_steps(self) -> None:
         if self._router_step is None:

@@ -26,7 +26,8 @@ src/
 │   └── result_parser.py      # 结果解析
 ├── api_view/                 # FastAPI 路由与聊天服务
 │   ├── web_main.py           # FastAPI 入口
-│   ├── api/                  # 路由（chat、health）
+│   ├── routers/              # `/campus/...` 路由
+│   ├── schemas/              # API 请求响应 schema
 │   └── services/             # 业务服务（ChatService）
 ├── domain/                   # 领域模块（无 agent 依赖）
 │   └── knowledge/
@@ -81,9 +82,14 @@ data/                        # 数据目录
 - 线程间引用（attach reference thread）
 - 自动压缩 older context 到摘要（减少 token 消耗）
 
-### 健康检查
-- `/health` — 服务存活检查
-- `/health/ready` — 模型 provider 连通性探针
+### HTTP API
+- `POST /campus/messages` — 发送非流式消息
+- `POST /campus/messages/stream` — 发送流式消息
+- `GET /campus/threads` — 获取线程摘要列表
+- `GET /campus/threads/{thread_id}` — 获取线程详情
+- `DELETE /campus/threads/{thread_id}` — 删除线程
+- `DELETE /campus/threads/{thread_id}/turns/{turn_id}` — 删除轮次
+- `GET /campus/health` — 健康检查，可追加 `?check_model=true` 探测模型连通性
 
 ## 启动方式
 

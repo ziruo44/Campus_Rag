@@ -10,12 +10,17 @@ import {
 import type {
   ChatMessage,
   ComposerSubmitPayload,
+  ChatStreamEvent,
+  PendingPrompt,
   ThreadListItem,
   ThreadResponse,
   ThreadTurnDTO,
 } from "../types/chat";
 
 const STORAGE_KEY = "rag-agent:active-thread-id";
+const NAVIGATION_CONFIRM_HEADER = "导航工具需要你确认后再执行。";
+const NAVIGATION_MISSING_HEADER = "导航信息还不完整。";
+const UNKNOWN_SLOT_VALUE = "待补充";
 
 function buildMessageId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -66,6 +71,97 @@ function updateMessage(
   const nextItems = [...items];
   nextItems[index] = updater(nextItems[index]);
   return nextItems;
+}
+
+function normalizePromptSlot(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized || normalized === UNKNOWN_SLOT_VALUE) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function extractPromptSlot(content: string, label: "起点：" | "终点："): string | null {
+  const line = content
+    .split("\n")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(label));
+
+  return normalizePromptSlot(line?.slice(label.length) ?? null);
+}
+
+function extractNumberedReplies(content: string): string[] {
+  return content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^\d+\.\s+/.test(line))
+    .map((line) => line.replace(/^\d+\.\s+/, "").trim())
+    .filter(Boolean);
+}
+
+function parsePendingPrompt(message: ChatMessage): PendingPrompt | null {
+  if (message.role !== "assistant") {
+    return null;
+  }
+
+  const content = message.content.trim();
+  if (!content) {
+    return null;
+  }
+
+  const startLocation = extractPromptSlot(content, "起点：");
+  const endLocation = extractPromptSlot(content, "终点：");
+
+  if (content.startsWith(NAVIGATION_MISSING_HEADER)) {
+    const suggestions = extractNumberedReplies(content).slice(0, 3);
+    const remembered = [
+      startLocation ? `已记住起点 ${startLocation}` : "",
+      endLocation ? `已记住终点 ${endLocation}` : "",
+    ].filter(Boolean);
+
+    return {
+      id: message.id,
+      kind: "navigation_missing",
+      eyebrow: "ACTION REQUIRED",
+      title:
+        startLocation && !endLocation
+          ? "补充终点后继续导航"
+          : !startLocation && endLocation
+            ? "补充起点后继续导航"
+            : "补全导航信息",
+      description: remembered.length
+        ? `${remembered.join("，")}。直接补全缺失字段后，我会继续当前导航流程。`
+        : "直接补全起点和终点，我会继续当前导航流程。",
+      startLocation,
+      endLocation,
+      hint: "补全后会先进入确认，再执行导航。",
+      suggestions,
+    };
+  }
+
+  if (content.startsWith(NAVIGATION_CONFIRM_HEADER)) {
+    return {
+      id: message.id,
+      kind: "navigation_confirm",
+      eyebrow: "READY TO RUN",
+      title: "确认并执行导航",
+      description:
+        startLocation && endLocation
+          ? `已记住起点 ${startLocation} 和终点 ${endLocation}。确认后会直接执行，不再重新理解目的地。`
+          : "导航信息已补全，确认后会直接执行。",
+      startLocation,
+      endLocation,
+      hint: "也可以直接在下方输入：起点改为南门 / 终点改为图书馆。",
+      suggestions: ["确认", "取消"],
+    };
+  }
+
+  return null;
 }
 
 function readStoredThreadId(): string | null {
@@ -128,6 +224,18 @@ export function useChatSession() {
   const infoMessage = ref("");
 
   const hasMessages = computed(() => messages.value.length > 0);
+  const pendingPrompt = computed<PendingPrompt | null>(() => {
+    const lastMessage = messages.value[messages.value.length - 1];
+    if (!lastMessage) {
+      return null;
+    }
+    return parsePendingPrompt(lastMessage);
+  });
+  const visibleMessages = computed(() =>
+    pendingPrompt.value
+      ? messages.value.filter((message) => message.id !== pendingPrompt.value?.id)
+      : messages.value,
+  );
 
   function applyThread(thread: ThreadResponse): void {
     threadId.value = thread.thread_id;
@@ -228,43 +336,38 @@ export function useChatSession() {
     try {
       await sendChatStream(
         normalized,
-        (chunk) => {
-          if (chunk.thread_id) {
-            resolvedThreadId = chunk.thread_id;
-            threadId.value = chunk.thread_id;
-            writeStoredThreadId(chunk.thread_id);
-          }
+        (event: ChatStreamEvent) => {
+          resolvedThreadId = event.thread_id;
+          threadId.value = event.thread_id;
+          writeStoredThreadId(event.thread_id);
 
-          if (chunk.turn_id) {
-            messages.value = updateMessage(
-              updateMessage(messages.value, optimisticUserMessage.id, (message) => ({
-                ...message,
-                turnId: chunk.turn_id ?? message.turnId,
-              })),
-              streamingAssistantMessage.id,
-              (message) => ({
-                ...message,
-                turnId: chunk.turn_id ?? message.turnId,
-              }),
-            );
-          }
+          messages.value = updateMessage(
+            updateMessage(messages.value, optimisticUserMessage.id, (message) => ({
+              ...message,
+              turnId: event.turn_id,
+            })),
+            streamingAssistantMessage.id,
+            (message) => ({
+              ...message,
+              turnId: event.turn_id,
+            }),
+          );
 
-          if (chunk.content) {
+          if (event.event === "delta" && event.content) {
             messages.value = updateMessage(
               messages.value,
               streamingAssistantMessage.id,
               (message) => ({
                 ...message,
-                content: `${message.content}${chunk.content}`,
+                content: `${message.content}${event.content}`,
               }),
             );
           }
 
-          if (chunk.error) {
-            streamError = chunk.error;
+          if (event.event === "error") {
+            streamError = event.error;
           }
         },
-        payload.preciseMode,
         threadId.value ?? undefined,
       );
 
@@ -304,6 +407,10 @@ export function useChatSession() {
     } finally {
       isLoading.value = false;
     }
+  }
+
+  async function replyToPendingPrompt(message: string): Promise<void> {
+    await sendMessage({ message });
   }
 
   async function removeThread(targetThreadId: string): Promise<void> {
@@ -370,13 +477,16 @@ export function useChatSession() {
     isRestoring,
     messages,
     openThread,
+    pendingPrompt,
     refreshHistory,
     removeThread,
     removeTurn,
+    replyToPendingPrompt,
     resetSession,
     restoreSession,
     sendMessage,
     threadId,
     threadTitle,
+    visibleMessages,
   };
 }

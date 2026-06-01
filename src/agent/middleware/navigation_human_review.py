@@ -7,7 +7,7 @@ import re
 from typing import Any, Literal
 
 from langchain.agents import AgentState
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.messages.tool import ToolCall
 
@@ -170,12 +170,12 @@ def _extract_slots_from_text(text: str) -> dict[str, str]:
 
 
 def _resolve_tool_args(
-    tool_call: ToolCall,
+    tool_call: ToolCall | None,
     user_reply: str,
     latest_prompt: str,
 ) -> dict[str, str]:
     prompt_slots = _extract_slots_from_prompt(latest_prompt)
-    tool_args = dict(tool_call.get("args") or {})
+    tool_args = dict((tool_call or {}).get("args") or {})
     text_slots = _extract_slots_from_text(user_reply)
 
     return {
@@ -261,6 +261,80 @@ def _build_navigation_tool_message(tool_call: ToolCall, resolved_args: dict[str,
     )
 
 
+def _build_navigation_tool_call(resolved_args: dict[str, str]) -> AIMessage:
+    return _build_navigation_tool_message(
+        {
+            "name": _NAVIGATION_TOOL_NAME,
+            "args": resolved_args,
+            "id": "call_navigation_review",
+            "type": "tool_call",
+        },
+        resolved_args,
+    )
+
+
+def _is_confirmation_prompt(prompt: str) -> bool:
+    return prompt.startswith(_CONFIRM_PROMPT_HEADER)
+
+
+def _is_missing_info_prompt(prompt: str) -> bool:
+    return prompt.startswith(_MISSING_PROMPT_HEADER)
+
+
+def _handle_pending_navigation_review(
+    *,
+    latest_prompt: str,
+    last_human_text: str,
+    allowed_actions: tuple[ReviewAction, ...],
+) -> AIMessage | None:
+    if not latest_prompt or not last_human_text:
+        return None
+
+    review_action = _classify_review_reply(last_human_text)
+    if review_action is None:
+        review_action = "edit"
+
+    resolved_args = _resolve_tool_args(
+        tool_call=None,
+        user_reply=last_human_text,
+        latest_prompt=latest_prompt,
+    )
+    missing_fields = _missing_fields(resolved_args)
+
+    if review_action == "reject":
+        return AIMessage(
+            content="已取消本次校园导航。需要重新查询时，直接告诉我新的起点和终点即可。"
+        )
+
+    if missing_fields:
+        return AIMessage(
+            content=_build_missing_info_prompt(
+                resolved_args=resolved_args,
+                missing_fields=missing_fields,
+            )
+        )
+
+    if _is_missing_info_prompt(latest_prompt):
+        return AIMessage(
+            content=_build_confirmation_prompt(
+                resolved_args=resolved_args,
+                allowed_actions=allowed_actions,
+            )
+        )
+
+    if _is_confirmation_prompt(latest_prompt):
+        if review_action == "approve":
+            return _build_navigation_tool_call(resolved_args)
+        return AIMessage(
+            content=_build_confirmation_prompt(
+                resolved_args=resolved_args,
+                allowed_actions=allowed_actions,
+            )
+        )
+
+    return None
+
+
 class NavigationHumanReviewMiddleware(AgentMiddleware[AgentState, None, Any]):
     """Intercept navigation tool calls and require a human confirmation turn."""
 
@@ -271,6 +345,55 @@ class NavigationHumanReviewMiddleware(AgentMiddleware[AgentState, None, Any]):
         self.interrupt_on = interrupt_on or {
             _NAVIGATION_TOOL_NAME: ToolHumanReviewConfig(),
         }
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[None],
+        handler,
+    ) -> ModelResponse[Any] | AIMessage:
+        short_circuit = self._maybe_short_circuit_pending_review(request.messages)
+        if short_circuit is not None:
+            return short_circuit
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[None],
+        handler,
+    ) -> ModelResponse[Any] | AIMessage:
+        short_circuit = self._maybe_short_circuit_pending_review(request.messages)
+        if short_circuit is not None:
+            return short_circuit
+        return await handler(request)
+
+    def _maybe_short_circuit_pending_review(
+        self,
+        messages: list[BaseMessage],
+    ) -> AIMessage | None:
+        if len(messages) < 2:
+            return None
+
+        last_message = messages[-1]
+        prompt_message = messages[-2]
+        if not isinstance(last_message, HumanMessage):
+            return None
+        if not isinstance(prompt_message, AIMessage):
+            return None
+
+        latest_prompt = _extract_message_text(prompt_message)
+        if not (
+            latest_prompt.startswith(_CONFIRM_PROMPT_HEADER)
+            or latest_prompt.startswith(_MISSING_PROMPT_HEADER)
+        ):
+            return None
+
+        last_human_text = _extract_message_text(last_message)
+        config = self.interrupt_on[_NAVIGATION_TOOL_NAME]
+        return _handle_pending_navigation_review(
+            latest_prompt=latest_prompt,
+            last_human_text=last_human_text,
+            allowed_actions=config.allowed_actions,
+        )
 
     def after_model(
         self,
@@ -292,14 +415,20 @@ class NavigationHumanReviewMiddleware(AgentMiddleware[AgentState, None, Any]):
         last_human_text = _extract_message_text(last_human_message)
         latest_prompt = _find_latest_navigation_prompt(prior_messages)
         has_pending_prompt = bool(latest_prompt)
-        review_action = _classify_review_reply(last_human_text)
-        if has_pending_prompt and review_action is None and last_human_text:
-            review_action = "edit"
 
         for tool_call in last_ai_message.tool_calls:
             config = self.interrupt_on.get(tool_call["name"])
             if config is None:
                 continue
+
+            if has_pending_prompt:
+                handled_message = _handle_pending_navigation_review(
+                    latest_prompt=latest_prompt,
+                    last_human_text=last_human_text,
+                    allowed_actions=config.allowed_actions,
+                )
+                if handled_message is not None:
+                    return {"messages": [handled_message]}
 
             resolved_args = _resolve_tool_args(
                 tool_call=tool_call,
@@ -307,36 +436,6 @@ class NavigationHumanReviewMiddleware(AgentMiddleware[AgentState, None, Any]):
                 latest_prompt=latest_prompt,
             )
             missing_fields = _missing_fields(resolved_args)
-
-            if has_pending_prompt and review_action == "reject":
-                return {
-                    "messages": [
-                        AIMessage(
-                            content="已取消本次校园导航。需要重新查询时，直接告诉我新的起点和终点即可。"
-                        )
-                    ]
-                }
-
-            if has_pending_prompt and review_action in {"approve", "edit"}:
-                if missing_fields:
-                    return {
-                        "messages": [
-                            AIMessage(
-                                content=_build_missing_info_prompt(
-                                    resolved_args=resolved_args,
-                                    missing_fields=missing_fields,
-                                )
-                            )
-                        ]
-                    }
-                return {
-                    "messages": [
-                        _build_navigation_tool_message(
-                            tool_call=tool_call,
-                            resolved_args=resolved_args,
-                        )
-                    ]
-                }
 
             if missing_fields:
                 return {

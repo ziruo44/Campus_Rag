@@ -6,13 +6,17 @@ import argparse
 import sys
 from typing import Sequence
 
+from app_bootstrap import (
+    get_life_guide_workflow_service,
+    get_major_workflow_service,
+)
+from agent.workflows.life_guide_service import LifeGuideWorkflowService
+from agent.workflows.service import MajorKnowledgeWorkflowService
 from api_view.services.chat_service import ChatService
 from domain.major_knowledge.retrieval.bm25_index import prewarm_jieba
 from domain.life_guide_knowledge.retrieval.bm25_index import prewarm_jieba as prewarm_life_guide_jieba
 from memory.config import MemorySettings
 from memory.session import ManagedThread, SessionManager
-from agent.workflows.life_guide_service import LifeGuideWorkflowService
-from agent.workflows.service import MajorKnowledgeWorkflowService
 
 _WELCOME_BANNER = """
 Campus Knowledge CLI
@@ -73,8 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = MemorySettings(
         compaction_notice_callback=_print_compaction_notice,
     )
-    major_workflow_service = MajorKnowledgeWorkflowService()
-    life_guide_workflow_service = LifeGuideWorkflowService()
+    major_workflow_service = get_major_workflow_service()
+    life_guide_workflow_service = get_life_guide_workflow_service()
     chat_service = ChatService(
         major_workflow_service,
         life_guide_workflow_service,
