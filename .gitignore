@@ -16,6 +16,7 @@ build/
 .env.*
 !.env.example
 docs/
+tests/
 
 # Dependencies (use pyproject.toml, not lock files in git)
 # uv.lock
