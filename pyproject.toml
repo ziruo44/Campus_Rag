@@ -24,6 +24,7 @@ dependencies = [
     "rank_bm25>=0.2",
     "jieba>=0.42",
     "uvicorn>=0.32.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]

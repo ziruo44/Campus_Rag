@@ -18,6 +18,12 @@ from api_view.services.chat_service import ChatService
 from domain.life_guide_knowledge.runtime import LifeGuideKnowledgeRuntime
 from domain.major_knowledge.runtime import KnowledgeRuntime
 from llm.health import ModelProviderHealthProbe
+from shared.cache import (
+    NullRetrievalCache,
+    RedisRetrievalCache,
+    RetrievalCache,
+    RetrievalCacheSettings,
+)
 
 
 @lru_cache(maxsize=1)
@@ -39,11 +45,21 @@ def get_model_health_probe() -> ModelProviderHealthProbe:
 
 
 @lru_cache(maxsize=1)
+def get_retrieval_cache() -> RetrievalCache:
+    """返回共享的检索缓存实例。"""
+    settings = RetrievalCacheSettings()
+    if not settings.is_enabled:
+        return NullRetrievalCache()
+    return RedisRetrievalCache(settings=settings)
+
+
+@lru_cache(maxsize=1)
 def get_major_workflow_service() -> MajorKnowledgeWorkflowService:
     """返回共享的专业知识工作流服务。"""
     return MajorKnowledgeWorkflowService(
         knowledge_runtime=get_major_knowledge_runtime(),
         health_probe=get_model_health_probe(),
+        retrieval_cache=get_retrieval_cache(),
     )
 
 
@@ -53,6 +69,7 @@ def get_life_guide_workflow_service() -> LifeGuideWorkflowService:
     return LifeGuideWorkflowService(
         knowledge_runtime=get_life_guide_runtime(),
         health_probe=get_model_health_probe(),
+        retrieval_cache=get_retrieval_cache(),
     )
 
 

@@ -20,13 +20,7 @@ def test_manual_workflow_debug(pytestconfig) -> None:
     if not query:
         pytest.skip("Pass --workflow-query to run manual workflow inspection.")
 
-    precise = pytestconfig.getoption("workflow_precise")
-    strategy = "passthrough" if precise else "compressed"
-
-    result = get_workflow_service().execute(
-        user_query=query,
-        retrieval_context_strategy=strategy,
-    )
+    result = get_workflow_service().execute(user_query=query)
 
     print("\n=== query ===")
     print(query)

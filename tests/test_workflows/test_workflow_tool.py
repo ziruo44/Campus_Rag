@@ -11,8 +11,7 @@ class StubWorkflowService:
         self.tool_name = tool_name
         self.source = source
 
-    def execute(self, *, user_query, retrieval_context_strategy="compressed"):
-        del retrieval_context_strategy
+    def execute(self, *, user_query):
         evidence = {
             "content": "stub retrieval context",
             "source": self.source,

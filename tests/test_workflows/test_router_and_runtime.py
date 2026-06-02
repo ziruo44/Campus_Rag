@@ -139,10 +139,7 @@ def test_workflow_service_execute_returns_structured_trace(monkeypatch) -> None:
     )
     monkeypatch.setattr(service_module, "extract_query_filters", lambda retriever, query: {})
 
-    execution = workflow_service.execute(
-        user_query="What is the AI major?",
-        retrieval_context_strategy="compressed",
-    )
+    execution = workflow_service.execute(user_query="What is the AI major?")
 
     assert execution["resolved_queries"][0]["route"] == "detail"
     assert execution["retrieval_context"] == "retrieval context"

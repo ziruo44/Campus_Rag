@@ -72,8 +72,7 @@ class StubWorkflowService:
     def ensure_initialized(self) -> None:
         return None
 
-    def execute(self, *, user_query, retrieval_context_strategy="compressed"):
-        del retrieval_context_strategy
+    def execute(self, *, user_query):
         if self.should_fail:
             raise RuntimeError("runtime boom")
         evidence = {
@@ -157,7 +156,6 @@ class FakeFrameworkAgent:
 
     async def astream(self, payload, stream_mode=None, version="v2"):
         del stream_mode, version
-        messages = list(payload["messages"])
         tool_text = self.tool_callable.invoke({"query": "hello"})
         tool_call_message = AIMessage(
             content="",
@@ -501,8 +499,8 @@ def test_chat_failure_marks_turn_failed(tmp_path: Path) -> None:
 
 def test_chat_returns_503_for_model_connection_errors(tmp_path: Path) -> None:
     class ConnectionErrorWorkflowService(StubWorkflowService):
-        def execute(self, *, user_query, retrieval_context_strategy="compressed"):
-            del user_query, retrieval_context_strategy
+        def execute(self, *, user_query):
+            del user_query
             request = httpx.Request("POST", "https://example.com/v1/chat/completions")
             raise httpx.ConnectError("tls handshake failed", request=request)
 

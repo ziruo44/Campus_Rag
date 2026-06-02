@@ -13,10 +13,13 @@ from app_bootstrap import (
 from agent.workflows.life_guide_service import LifeGuideWorkflowService
 from agent.workflows.service import MajorKnowledgeWorkflowService
 from api_view.services.chat_service import ChatService
+from domain.life_guide_knowledge.retrieval.bm25_index import (
+    prewarm_jieba as prewarm_life_guide_jieba,
+)
 from domain.major_knowledge.retrieval.bm25_index import prewarm_jieba
-from domain.life_guide_knowledge.retrieval.bm25_index import prewarm_jieba as prewarm_life_guide_jieba
 from memory.config import MemorySettings
 from memory.session import ManagedThread, SessionManager
+from shared.logging_setup import configure_logging
 
 _WELCOME_BANNER = """
 Campus Knowledge CLI
@@ -71,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI."""
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -346,7 +350,7 @@ def _print_latest_artifacts(thread: ManagedThread) -> None:
 
     if evidence_bundle:
         first_evidence = evidence_bundle[0]
-        source = first_evidence.get('source') or "unknown"
+        source = first_evidence.get("source") or "unknown"
         print(f"Top evidence source: {source}")
 
 

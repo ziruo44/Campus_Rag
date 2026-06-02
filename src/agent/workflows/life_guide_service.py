@@ -12,6 +12,7 @@ from domain.life_guide_knowledge.runtime import (
     RuntimeUnavailableError,
 )
 from llm.health import ModelProviderHealthProbe, ModelProviderHealthResult
+from shared.cache import NullRetrievalCache, RetrievalCache
 from shared.observability.performance import (
     increment_tool_calls,
     measure_stage,
@@ -20,7 +21,8 @@ from shared.observability.performance import (
 from utils.text import truncate_text
 
 _TOP_K = 5
-_CONTENT_LIMIT = 320
+_CACHE_DOMAIN = "life_guide"
+_CACHE_MODEL_VERSION = "life-guide-v1"
 
 
 class LifeGuideWorkflowService:
@@ -31,9 +33,11 @@ class LifeGuideWorkflowService:
         *,
         knowledge_runtime: LifeGuideKnowledgeRuntime | None = None,
         health_probe: ModelProviderHealthProbe | None = None,
+        retrieval_cache: RetrievalCache | None = None,
     ) -> None:
         self._runtime = knowledge_runtime or LifeGuideKnowledgeRuntime()
         self._health_probe = health_probe or ModelProviderHealthProbe()
+        self._retrieval_cache = retrieval_cache or NullRetrievalCache()
 
     @property
     def is_initialized(self) -> bool:
@@ -48,9 +52,16 @@ class LifeGuideWorkflowService:
         self,
         *,
         user_query: str,
-        retrieval_context_strategy: str = "passthrough",
     ) -> dict[str, Any]:
         """执行生活指南检索工作流并返回结构化结果。"""
+        cached_result = self._retrieval_cache.get_workflow_result(
+            domain=_CACHE_DOMAIN,
+            user_query=user_query,
+            model_version=_CACHE_MODEL_VERSION,
+        )
+        if cached_result is not None:
+            return cached_result
+
         self.ensure_initialized()
         runtime = self.runtime
 
@@ -69,7 +80,6 @@ class LifeGuideWorkflowService:
         retrieval_context = self._build_retrieval_context(
             documents,
             query=user_query,
-            strategy=retrieval_context_strategy,
         )
         resolved_query = ResolvedWorkflowQuery(
             source_query=user_query,
@@ -79,13 +89,20 @@ class LifeGuideWorkflowService:
             retrieval_context=retrieval_context,
         )
 
-        return {
+        result = {
             "retrieval_context": retrieval_context,
             "evidence_bundle": self._build_evidence_bundle(documents),
             "resolved_queries": [resolved_query.to_dict()],
             "route_trace": ["life_guide"],
             "workflow_trace": [trace_event.to_dict()],
         }
+        self._retrieval_cache.set_workflow_result(
+            domain=_CACHE_DOMAIN,
+            user_query=user_query,
+            model_version=_CACHE_MODEL_VERSION,
+            result=result,
+        )
+        return result
 
     def probe_model_provider(
         self,
@@ -104,10 +121,8 @@ class LifeGuideWorkflowService:
         documents: list[Document],
         *,
         query: str,
-        strategy: str,
     ) -> str:
-        if strategy == "compressed":
-            documents = [self._truncate_document(doc) for doc in documents[:_TOP_K]]
+        documents = list(documents[:_TOP_K])
 
         if not documents:
             return (
@@ -166,12 +181,6 @@ class LifeGuideWorkflowService:
                 f"content_preview={truncate_text(doc.page_content.strip(), limit=120)}"
             )
         return "\n".join(lines)
-
-    def _truncate_document(self, doc: Document) -> Document:
-        return Document(
-            page_content=truncate_text(doc.page_content.strip(), limit=_CONTENT_LIMIT),
-            metadata=dict(doc.metadata),
-        )
 
     def _build_evidence_bundle(self, documents: list[Document]) -> list[dict[str, Any]]:
         evidence: list[dict[str, Any]] = []

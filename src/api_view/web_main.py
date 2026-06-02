@@ -1,4 +1,4 @@
-"""FastAPI 应用入口。"""
+"""FastAPI application entrypoint."""
 
 from __future__ import annotations
 
@@ -13,10 +13,12 @@ from api_view.routers import (
     campus_threads_router,
 )
 from app_bootstrap import get_life_guide_runtime, get_major_knowledge_runtime
+from shared.logging_setup import configure_logging
 
 
 def create_app(*, prewarm_runtime: bool = True) -> FastAPI:
-    """创建 FastAPI 应用。"""
+    """Create the FastAPI application."""
+    configure_logging()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

@@ -37,9 +37,3 @@ def pytest_addoption(parser) -> None:
         default="",
         help="Run the manual workflow debug test with the given query.",
     )
-    parser.addoption(
-        "--workflow-precise",
-        action="store_true",
-        default=False,
-        help="Use passthrough retrieval context in the manual workflow debug test.",
-    )
