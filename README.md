@@ -1,6 +1,6 @@
 # RAG Agent 校园知识库
 
-温州商学院校园知识问答 Agent，基于 LangChain ReAct 架构，使用阿里云 Qwen + ChromaDB + 混合检索（BM25 + 向量）。
+校园知识问答 Agent，基于 LangChain ReAct 架构，使用阿里云 Qwen + ChromaDB + 混合检索（BM25 + 向量）。
 
 ## 技术栈
 
